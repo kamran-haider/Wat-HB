@@ -52,7 +52,7 @@ t = time.time()
 #print "Performing entropy calculations ..."
 g.getVoxelEntropies(options.frames, 0.5, gist_logfile)
 #print "entropy calcs took seconds.", time.time() - t    
-g.writeGistData(options.outfile)
+#g.writeGistData(options.outfile)
 gist_logfile.close()
     
 # commands to run

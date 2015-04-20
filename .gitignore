@@ -1,7 +1,12 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
+#sublime workspace files
+*.sublime-workspace
 
+# various text files
+*.com
+*.run
 # C extensions
 *.so
 
