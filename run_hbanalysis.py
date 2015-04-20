@@ -11,7 +11,7 @@ import time
 import numpy as np
 from schrodinger import structure
 from optparse import OptionParser
-from gist_desmond_composite import Gist
+from hb_analysis import Gist
 
 parser = OptionParser()
 parser.add_option("-i", "--input_cms", dest="cmsname", type="string", help="Input CMS file")
@@ -47,10 +47,10 @@ print "Performing energy calculations ..."
 t = time.time()
 g.getVoxelEnergies(options.frames, options.start_frame)
 print "energy calcs took seconds.", time.time() - t
-g.normalizeVoxelQuantities(options.frames, gist_logfile)
-t = time.time()
+#g.normalizeVoxelQuantities(options.frames, gist_logfile)
+#t = time.time()
 #print "Performing entropy calculations ..."
-g.getVoxelEntropies(options.frames, 0.5, gist_logfile)
+#g.getVoxelEntropies(options.frames, 0.5, gist_logfile)
 #print "entropy calcs took seconds.", time.time() - t    
 #g.writeGistData(options.outfile)
 gist_logfile.close()

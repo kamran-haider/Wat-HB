@@ -67,7 +67,7 @@ double dist(double x1, double x2, double x3, double y1, double y2, double y3) {
 
 
 
-PyObject *_gistcalcs_processGrid(PyObject *self, PyObject *args)
+PyObject *_hbcalcs_processGrid(PyObject *self, PyObject *args)
     {
     // variables reterived from python
     int frames, start_frame, num_atoms; // total number of frames and atoms in the system
@@ -170,7 +170,7 @@ PyObject *_gistcalcs_processGrid(PyObject *self, PyObject *args)
                         // obtain the voxel ID for this water
                         voxel_id = ((int)grid_index_x*(int)*(double *)PyArray_GETPTR1(grid_dim, 1) + (int)grid_index_y)*(int)*(double *)PyArray_GETPTR1(grid_dim, 2) + (int)grid_index_z;
                         // Energy calculations
-                        energy(wat_x, wat_y, wat_z, solute_at_ids, wat_oxygen_ids, coords, charges, vdw, box, voxel_data, wat_index_info, *wat_id, voxel_id);
+                        //energy(wat_x, wat_y, wat_z, solute_at_ids, wat_oxygen_ids, coords, charges, vdw, box, voxel_data, wat_index_info, *wat_id, voxel_id);
                         //energy_ww(wat_x, wat_y, wat_z, wat_oxygen_ids, coords, charges, vdw, box, voxel_data, *wat_id, voxel_id, n_wat);
                         // get hydrogen atom coords
                         h1x = (double *)PyArray_GETPTR2(coords, *wat_id, 0);
@@ -182,8 +182,8 @@ PyObject *_gistcalcs_processGrid(PyObject *self, PyObject *args)
                         //printf("Energy value for this voxel: %f\n",*(double *)PyArray_GETPTR2(voxel_data, voxel_id, 13));
                         //printf("water coords %f %f %f\n", *wat_x, *wat_y, *wat_z);
                         // send water x, y, z to python
-                        arglist_sendWatCoords = Py_BuildValue("(iddddddddd)", voxel_id, *wat_x, *wat_y, *wat_z, *h1x, *h1y, *h1z, *h2x, *h2y, *h2z);
-                        PyEval_CallObject(sendWatCoords, arglist_sendWatCoords);
+                        //arglist_sendWatCoords = Py_BuildValue("(iddddddddd)", voxel_id, *wat_x, *wat_y, *wat_z, *h1x, *h1y, *h1z, *h2x, *h2y, *h2z);
+                        //PyEval_CallObject(sendWatCoords, arglist_sendWatCoords);
                         //printf("water coords %f %f %f\n", *wat_x, *wat_y, *wat_z);
                         //printf("grid indices %f %f %f\n", grid_index_x, grid_index_y, grid_index_z);
                         //printf("grid indices %i %i %i\n", (int)grid_index_x, (int)grid_index_y, (int)grid_index_z);
@@ -215,10 +215,10 @@ PyObject *_gistcalcs_processGrid(PyObject *self, PyObject *args)
  * Registering all the functions that will be called from Python
  */
 
-static PyMethodDef _gistcalcs_methods[] = {
+static PyMethodDef _hbcalcs_methods[] = {
     {
         "processGrid",
-        (PyCFunction)_gistcalcs_processGrid,
+        (PyCFunction)_hbcalcs_processGrid,
         METH_VARARGS,
         "Process grid"
     },
@@ -228,9 +228,9 @@ static PyMethodDef _gistcalcs_methods[] = {
 /* Initialization function for this module
  */
 
-PyMODINIT_FUNC init_gistcalcs() // init function has the same name as module, except with init prefix
+PyMODINIT_FUNC init_hbcalcs() // init function has the same name as module, except with init prefix
 {
     // we produce name of the module, method table and a doc string
-    Py_InitModule3("_gistcalcs", _gistcalcs_methods, "Process GIST calcs.\n");
+    Py_InitModule3("_hbcalcs", _hbcalcs_methods, "Process GIST calcs.\n");
     import_array(); // required for Numpy initialization
 }
