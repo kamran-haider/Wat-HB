@@ -176,7 +176,9 @@ class HBcalcs:
             hs_dict[c_count].append([]) # to store E_nbr distribution
             hs_dict[c_count].append([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [], [], [], []]) # to store hbond info
             c_count += 1
+        
         return hs_dict
+
 
 #*********************************************************************************************#
     def _initializePBC(self):
@@ -289,23 +291,26 @@ class HBcalcs:
             oxygen_pos = pos[self.wat_oxygen_atom_ids-1] # obtain coords of O-atoms
             # begin iterating over each cluster center in the cluster/HSA dictionary
             for cluster in self.hsa_data:
-                print "processin cluster: ", cluster
+                #print "processin cluster: ", cluster
                 nbr_indices = self.getNeighborAtoms(oxygen_pos, 1.0, self.hsa_data[cluster][0])
                 cluster_wat_oxygens = [self.wat_oxygen_atom_ids[nbr_index] for nbr_index in nbr_indices]
                 # begin iterating over water oxygens found in this cluster in current frame
                 for wat_O in cluster_wat_oxygens:
+                    self.hsa_data[cluster][1][0] += 1
                     cluster_water_all_atoms = self.getWaterIndices(np.asarray([wat_O]))
                     #print wat_O-1, pos[wat_O-1]
                     #print cluster_water_all_atoms
                     nbr_indices = self.getNeighborAtoms(oxygen_pos, 3.5, pos[wat_O-1])
                     firstshell_wat_oxygens = [self.wat_oxygen_atom_ids[nbr_index] for nbr_index in nbr_indices]
+                    self.hsa_data[cluster][1][2] += len(firstshell_wat_oxygens)
+
                     # begin iterating over neighboring oxygens of current water oxygen
                     for nbr_O in firstshell_wat_oxygens:
                         #print nbr_O
                         nbr_wat_all_atoms = self.getWaterIndices(np.asarray([nbr_O]))
                         #print nbr_wat_all_atoms
                         # indices are offset by -1 to facilitate validation with vmd
-                        print "Processing water pair: ", wat_O-1, nbr_O-1
+                        #print "Processing water pair: ", wat_O-1, nbr_O-1
                         #print pos[wat_O-1], pos[nbr_O-1], pos[nbr_wat_all_atoms[1]-1]
                         #print "angle 1: ", self._getTheta(frame, pos[wat_O-1], pos[nbr_O-1], pos[nbr_wat_all_atoms[1]-1])
                         # list of all potential H-bond angles between the water-water pair
@@ -313,7 +318,15 @@ class HBcalcs:
                                         self._getTheta(frame, pos[wat_O-1], pos[nbr_O-1], pos[nbr_wat_all_atoms[2]-1]), 
                                         self._getTheta(frame, pos[nbr_O-1], pos[wat_O-1], pos[cluster_water_all_atoms[1]-1]), 
                                         self._getTheta(frame, pos[nbr_O-1], pos[wat_O-1], pos[cluster_water_all_atoms[2]-1])]
-                        print min(theta_list)
+                        #print min(theta_list)
+                        if min(theta_list) <= 35:
+                            self.hsa_data[cluster][1][3] += 1
+
+        for cluster in self.hsa_data:
+            print cluster, self.hsa_data[cluster][1][0], self.hsa_data[cluster][1][0]/options.frames, self.hsa_data[cluster][1][2]/self.hsa_data[cluster][1][0], self.hsa_data[cluster][1][3]/self.hsa_data[cluster][1][0]
+
+
+
 
 
 
@@ -338,4 +351,3 @@ if (__name__ == '__main__') :
     h = HBcalcs(options.cmsname, options.trjname, options.clusters)
     print "Running calculations ..."
     h.run_hb_analysis(options.frames, options.start_frame)
-
