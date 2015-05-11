@@ -30,18 +30,14 @@ from schrodinger import structure
 from schrodinger.trajectory.desmondsimulation import create_simulation
 from schrodinger.trajectory.atomselection import select_component
 from schrodinger.trajectory.atomselection import FrameAslSelection as FAS
-from schrodinger.application.desmond.cms import Vdw
-import schrodinger.application.desmond.ffiostructure as ffiostructure
-#import schrodinger.infra.mmlist as mmlist
-#import schrodinger.infra.mm as mm
-# import C-helper module
-import _hbcalcs as gistcalcs
+from schrodinger.trajectory.pbc_manager import PBCMeasureMananger
 
 # import other python modules
 import numpy as np
 #from scipy.spatial import KDTree, cKDTree
 import sys, time
 #import math
+degrees_per_rad = 180./np.pi
 
 #################################################################################################################
 # Main GIST class                                                                                               #
@@ -49,19 +45,17 @@ import sys, time
 
 
 
-class Gist:
+class HBcalcs:
 #*********************************************************************************************#
     # Initializer function
-    def __init__(self, input_cmsname, input_trjname, center, resolution, dimensions):
+    def __init__(self, input_cmsname, input_trjname, clustercenter_file):
         """
         Data members
         """
         self.cmsname = input_cmsname
         self.dsim = create_simulation(input_cmsname, input_trjname)
         self._indexGenerator()
-        self._initializeGrid(center, resolution, dimensions)
-        self.voxeldata, self.voxeldict = self._initializeVoxelDict()
-        self.chg, self.vdw = self._getNonbondedParams()
+        self.hsa_data = self._initializeHSADict(clustercenter_file)
         self.box = self._initializePBC()
 
 #*********************************************************************************************#
@@ -81,13 +75,15 @@ class Gist:
         solvent_oxygen_atoms.sort()
         self.wat_oxygen_atom_ids = np.array(solvent_oxygen_atoms, dtype=np.int)
         self.wat_oxygen_atom_gids = self.wat_oxygen_atom_ids - 1
+        # obtain atom indices for all water atoms
+        self.wat_atom_ids = self.getWaterIndices(self.wat_oxygen_atom_ids)
         # obtain atom and global indices for all water atoms
-        wat_id_list = self.getWaterIndices(self.wat_oxygen_atom_ids)
-        self.wat_atom_ids = wat_id_list[0]
-        self.wat_atom_gids = wat_id_list[1]        
+        #wat_id_list = self.getWaterIndices(self.wat_oxygen_atom_ids)
+        #self.wat_atom_ids = wat_id_list[0]
+        #self.wat_atom_gids = wat_id_list[1]        
         # obtain all non-water atom and global indices
         self.non_water_atom_ids = np.setxor1d(self.all_atom_ids, self.wat_atom_ids).astype(int)
-        self.non_water_gids = np.setxor1d(self.all_atom_gids,self.wat_atom_gids)
+        #self.non_water_gids = np.setxor1d(self.all_atom_gids,self.wat_atom_gids)
  
 #*********************************************************************************************#
     # retrieve water atom indices for selected oxygen indices 
@@ -144,8 +140,10 @@ class Gist:
             for i in range(natom_sites):
                 atid = oxygen_atid + i - oxygen_index
                 water_atids.append(atid)
-        id_list.append(np.array(water_atids))
+        #id_list.append(np.array(water_atids))
         #return gids of particles (including pseudo sites) of selected water molecules.
+        # For now we will ignore GIDs but these are important when water model has pseudoatoms
+        """
         water_gids = []
         for oxygen_gid in oxygen_gids:
             for i in range(natom_sites):
@@ -158,111 +156,27 @@ class Gist:
                 water_gids.append(gid)
         water_gids.sort()
         id_list.append(np.array(water_gids, dtype=np.int))
+        """
         self.oxygen_index = oxygen_index
         self.n_atom_sites = natom_sites
         self.n_pseudo_sites = npseudo_sites
         self.wat_begin_gid = wat_begin_gid
         self.pseudo_begin_gid = pseudo_begin_gid
-        return id_list
-#*********************************************************************************************#
-    def _getNonbondedParams(self):
-        # obtain LJ and Elec params
-        #*********************************************************************************#
-        vdw = [] # combined list of all vdw params from all ct's
-        chg = [] # combined list of all charges from all ct's
-        ct_list = [e for e in ffiostructure.CMSReader(self.cmsname)]
-        struct_ct = ct_list[1:] # this means this works only on cms files with separate CT blocks
-        # get total number of solute atoms
-        for ct in struct_ct:
-            #print ct.atom_total, len(ct.ffio.site), len(ct.ffio.pseudo)
-            #else: # do the normal parsing
-            ct_vdw   = [] # list of vdw objects for each ct
-            ct_chg = []
-            ct_pseudo_vdw = []
-            ct_pseudo_chg = []
-            n_atomic_sites = 0
-            n_pseudo_sites = 0
-            vdw_type = {} # dict of vdw types, Vdw object in this list are uninitialized
-            for e in ct.ffio.vdwtype :
-                vdw_type[e.name] = Vdw( (e.name,), e.funct, (e.c1, e.c2,) )
-                #print (e.name,), e.funct, (e.c1, e.c2,)
-
-            for e in ct.ffio.site: # for each site (i.e., an atom in most cases)
-                #print e.type.lower()
-                if e.type.lower() == 'pseudo':
-                    ct_pseudo_vdw.append( vdw_type[e.vdwtype] ) # add to vdw list for this ct
-                    ct_pseudo_chg.append(e.charge)
-                    n_pseudo_sites += 1
-                else:
-                    ct_vdw.append( vdw_type[e.vdwtype] ) # add to vdw list for this ct
-                    ct_chg.append(e.charge)
-                    n_atomic_sites += 1
-
-                #print e.index, e.charge
-		        # check if this site belongs to pseudoparticle, if yes raise corresponding number
-            #print n_atomic_sites, n_pseudo_sites
-            ct_vdw *= int(ct.atom_total/n_atomic_sites)
-            ct_chg *= int(ct.atom_total/n_atomic_sites)
-            vdw.extend( ct_vdw )
-            chg.extend( ct_chg)
-            if n_pseudo_sites != 0:
-                ct_pseudo_vdw *= int(len(ct.ffio.pseudo)/n_pseudo_sites)
-                ct_pseudo_chg *= int(len(ct.ffio.pseudo)/n_pseudo_sites)
-                #print int(ct.atom_total / len( ct.ffio.site ))
-                vdw.extend( ct_pseudo_vdw )
-                chg.extend( ct_pseudo_chg)
-
-        chg = np.asarray(chg)*18.2223
-        vdw_params = []
-        for v in vdw:
-            vdw_params.extend([v.c])
-        vdw_params = np.asarray(vdw_params)
-        
-        #tmp_wat_ids = self.getWaterIndices(np.asarray([self.wat_atom_ids[0]]))[0]
-        #tmp_wat_gids = self.getWaterIndices(np.asarray([self.wat_atom_ids[0]]))[1]
-        #print tmp_wat_ids, tmp_wat_gids
-        #print chg[tmp_wat_gids]
-        #print vdw_params[tmp_wat_gids]
-
-        #print vdw_params[self.water_atom_ids-1]
-        return (chg, vdw_params)
-        
-#*********************************************************************************************#
-    def _initializeGrid(self, center=[0.0,0.0,0.0], resolution=[1.0,1.0,1.0], dimensions=[1, 1, 1]):
-        # set grid center, res and dimension
-        self.center = np.array(center,dtype=np.float_)
-        self.dims = np.array(dimensions)
-        self.spacing = np.array(resolution,dtype=np.float_)
-        o = self.center - 0.5*self.dims*self.spacing
-        self.origin = np.around(o, decimals=2)
-        # set grid size (in terms of total points alog each axis)
-        length = np.array(self.dims/self.spacing, dtype=np.float_)
-        self.grid_size = np.ceil(length / self.spacing + 1.0)
-        self.grid_size = np.cast['uint32'](self.grid_size)
-        # Finally allocate the space for the grid
-        self.grid = np.zeros(self.dims,dtype=np.float_)
-
+        return np.array(water_atids)
 
 #*********************************************************************************************#
-    def _initializeVoxelDict(self):
-        voxel_dict = {}
-        v_count = 0
-        voxel_array = np.zeros((self.grid.size, 21), dtype="float64")
-        #print voxel_dict_new.shape
-        for index, value in np.ndenumerate(self.grid): 
-            #point = grid.pointForIndex(index) # get cartesian coords for the grid point
-            _index = np.array(index, dtype=np.int32)
-            #point = self.spacing * _index + self._origin
-            point = _index*self.spacing + self.origin + 0.5*self.spacing
-            voxel_array[v_count, 1] = point[0]
-            voxel_array[v_count, 2] = point[1]
-            voxel_array[v_count, 3] = point[2]
-            voxel_array[v_count, 0] = v_count
-            #print voxel_dict_new[v_count, 0], voxel_dict_new[v_count, 1], voxel_dict_new[v_count, 2]
-            voxel_dict[v_count] = [[]] # create a dictionary key-value pair with voxel index as key and it's coords as
-            #voxel_dict[v_count].append(np.zeros(14, dtype="float64"))
-            v_count += 1
-        return voxel_array, voxel_dict
+    def _initializeHSADict(self, clust_center_file):
+        clusters = structure.StructureReader(clust_center_file).next()
+        hs_dict = {}
+        cluster_centers = clusters.getXYZ()
+        c_count = 0
+        for h in cluster_centers: 
+            hs_dict[c_count] = [tuple(h)] # create a dictionary key-value pair with voxel index as key and it's coords as
+            hs_dict[c_count].append(np.zeros(14, dtype="float64"))
+            hs_dict[c_count].append([]) # to store E_nbr distribution
+            hs_dict[c_count].append([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [], [], [], []]) # to store hbond info
+            c_count += 1
+        return hs_dict
 
 #*********************************************************************************************#
     def _initializePBC(self):
@@ -274,39 +188,154 @@ class Gist:
             box = np.asarray([box_vectors[0], box_vectors[4], box_vectors[8]])
         return box
 #*********************************************************************************************#
-    def sendCoords(self, i):
-        #print "Processing frame: ", i+1, "..."
-        coords = []
-        # get frame structure, position array
-        frame = self.dsim.getFrame(i)
-        #frame_st = self.dsim.getFrameStructure(i)
-        pos = frame.position
-        pos_pseudo = frame.pseudo_position
-        coords.extend(pos)
-        if pos_pseudo.shape[0] != 0:
-            coords.extend(pos_pseudo)
-        coords = np.asarray(coords)
-        return coords
+
 #*********************************************************************************************#
-    # Energy Function
-    def getVoxelEnergies(self, n_frame, s_frame):
-        # testing new GIST module
-        wat_index_info = np.array([self.n_atom_sites, self.n_pseudo_sites, self.wat_begin_gid, self.pseudo_begin_gid, self.oxygen_index], dtype="int")
-        gistcalcs.processGrid(n_frame, s_frame, len(self.all_atom_ids), self.sendCoords, wat_index_info, self.all_atom_ids, self.non_water_atom_ids, self.wat_oxygen_atom_ids, self.wat_atom_ids, self.chg, self.vdw, self.box, self.dims.astype("float"), self.origin, self.voxeldata)
+    def getNeighborAtoms(self, xyz, dist, point):
+        """
+        An efficint routine for neighbor search
+        """
+        # create an array of indices around a cubic grid
+        dist_squared = dist * dist
+        neighbors = []
+        for i in (-1, 0, 1):
+            for j in (-1, 0, 1):
+                for k in (-1, 0, 1):
+                    neighbors.append((i,j,k))
+        neighbor_array = np.array(neighbors, np.int)
+        min_ = np.min(xyz, axis=0)
+        cell_size = np.array([dist, dist, dist], np.float)
+        cell = np.array((xyz - min_) / cell_size)#, dtype=np.int)
+        # create a dictionary with keys corresponding to integer representation of transformed XYZ's
+        cells = {}
+        for ix, assignment in enumerate(cell):
+            # convert transformed xyz coord into integer index (so coords like 1.1 or 1.9 will go to 1)
+            indices =  assignment.astype(int)
+            # create interger indices
+            t = tuple(indices)
+            # NOTE: a single index can have multiple coords associated with it
+            # if this integer index is already present
+            if t in cells:
+                # obtain its value (which is a list, see below)
+                xyz_list, trans_coords, ix_list = cells[t]
+                # append new xyz to xyz list associated with this entry
+                xyz_list.append(xyz[ix])
+                # append new transformed xyz to transformed xyz list associated with this entry
+                trans_coords.append(assignment)
+                # append new array index 
+                ix_list.append(ix)
+            # if this integer index is encountered for the first time
+            else:
+                # create a dictionary key value pair,
+                # key: integer index
+                # value: [[list of x,y,z], [list of transformed x,y,z], [list of array indices]]
+                cells[t] = ([xyz[ix]], [assignment], [ix])
+
+        cell0 = np.array((point - min_) / cell_size, dtype=np.int)
+        tuple0 = tuple(cell0)
+        near = []
+        for index_array in tuple0 + neighbor_array:
+            t = tuple(index_array)
+            if t in cells:
+                xyz_list, trans_xyz_list, ix_list = cells[t]
+                for (xyz, ix) in zip(xyz_list, ix_list):
+                    diff = xyz - point
+                    if np.dot(diff, diff) <= dist_squared and float(np.dot(diff, diff)) > 0.0:
+                        #near.append(ix)
+                        #print ix, np.dot(diff, diff)
+                        near.append(ix)
+        return near
+
+#*********************************************************************************************#
+    def _getTheta(self, frame, pos1, pos2, pos3):
+        "Adapted from Schrodinger pbc_manager class"
+        pos1.shape=1,3
+        pos2.shape=1,3
+        pos3.shape=1,3
+
+        r21 = frame.getMinimalDifference(pos1, pos2)
+        r23 = frame.getMinimalDifference(pos3, pos2)
+
+        norm = np.sqrt(np.sum(r21**2, axis=1) *
+                          np.sum(r23**2, axis=1))
+        cos_theta = np.sum(r21*r23, axis=1)/norm
+
+        # FIXME: is the isnan check sufficient?
+
+        # handle problem when pos1 or pos3 == pos2; make theta = 0.0 in this
+        # case
+        if np.any(np.isnan(cos_theta)):
+            cos_theta[np.isnan(cos_theta)] = 1.0
+
+        # handle numerical roundoff issue where abs(cos_theta) may be
+        # greater than 1
+        if np.any(np.abs(cos_theta) > 1.0):
+            cos_theta[cos_theta >  1.0] =  1.0
+            cos_theta[cos_theta < -1.0] = -1.0
+        theta = np.arccos(cos_theta) * degrees_per_rad
+        return theta
 
 
 #*********************************************************************************************#
-                    
-    def writeGistData(self, outfile):
-        f = open("gist_data_"+outfile+".txt", "w")
-        header_2 = "voxel x y z wat g_O g_H dTStr-dens dTStr-norm dTSor-dens dTSor-norm Esw-dens Esw-norm Eww-dens Eww-norm Eww-nbr-dens Eww-nbr-norm nbr-dens nbr-norm enc-dens enc-norm\n"
-        f.write(header_2)
-        for k in self.voxeldata:
-            l = "%i %.2f %.2f %.2f %i %.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f\n" % \
-                (k[0], k[1], k[2], k[3], k[4], k[5], k[6],
-                 k[7], k[8], k[9], k[10],
-                k[11], k[12], k[13], k[14], k[15], k[16], k[17], k[18], k[19], k[20])
-                #print l
-            f.write(l)
-        f.close()
-        
+                   
+    def run_hb_analysis(self, n_frame, start_frame):
+        # first step is to iterate over each frame
+        for i in xrange(start_frame, start_frame + n_frame):
+            print "Processing frame: ", i+1, "..."
+            # get frame structure, position array
+            frame = self.dsim.getFrame(i)
+            #measure_manager = PBCMeasureMananger(frame)
+            frame_st = self.dsim.getFrameStructure(i)
+            pos = frame.position
+            oxygen_pos = pos[self.wat_oxygen_atom_ids-1] # obtain coords of O-atoms
+            # begin iterating over each cluster center in the cluster/HSA dictionary
+            for cluster in self.hsa_data:
+                print "processin cluster: ", cluster
+                nbr_indices = self.getNeighborAtoms(oxygen_pos, 1.0, self.hsa_data[cluster][0])
+                cluster_wat_oxygens = [self.wat_oxygen_atom_ids[nbr_index] for nbr_index in nbr_indices]
+                # begin iterating over water oxygens found in this cluster in current frame
+                for wat_O in cluster_wat_oxygens:
+                    cluster_water_all_atoms = self.getWaterIndices(np.asarray([wat_O]))
+                    #print wat_O-1, pos[wat_O-1]
+                    #print cluster_water_all_atoms
+                    nbr_indices = self.getNeighborAtoms(oxygen_pos, 3.5, pos[wat_O-1])
+                    firstshell_wat_oxygens = [self.wat_oxygen_atom_ids[nbr_index] for nbr_index in nbr_indices]
+                    # begin iterating over neighboring oxygens of current water oxygen
+                    for nbr_O in firstshell_wat_oxygens:
+                        #print nbr_O
+                        nbr_wat_all_atoms = self.getWaterIndices(np.asarray([nbr_O]))
+                        #print nbr_wat_all_atoms
+                        # indices are offset by -1 to facilitate validation with vmd
+                        print "Processing water pair: ", wat_O-1, nbr_O-1
+                        #print pos[wat_O-1], pos[nbr_O-1], pos[nbr_wat_all_atoms[1]-1]
+                        #print "angle 1: ", self._getTheta(frame, pos[wat_O-1], pos[nbr_O-1], pos[nbr_wat_all_atoms[1]-1])
+                        # list of all potential H-bond angles between the water-water pair
+                        theta_list = [self._getTheta(frame, pos[wat_O-1], pos[nbr_O-1], pos[nbr_wat_all_atoms[1]-1]), 
+                                        self._getTheta(frame, pos[wat_O-1], pos[nbr_O-1], pos[nbr_wat_all_atoms[2]-1]), 
+                                        self._getTheta(frame, pos[nbr_O-1], pos[wat_O-1], pos[cluster_water_all_atoms[1]-1]), 
+                                        self._getTheta(frame, pos[nbr_O-1], pos[wat_O-1], pos[cluster_water_all_atoms[2]-1])]
+                        print min(theta_list)
+
+
+
+
+
+
+
+if (__name__ == '__main__') :
+
+    _version = "$Revision: 0.0 $"
+    
+    from optparse import OptionParser
+    parser = OptionParser()
+    parser.add_option("-i", "--input_cms", dest="cmsname", type="string", help="Input CMS file")
+    parser.add_option("-t", "--input_trajectory", dest="trjname", type="string", help="Input trajectory directory")
+    parser.add_option("-c", "--cluster_centers", dest="clusters", type="string", help="Cluster center file")
+    parser.add_option("-f", "--frames", dest="frames", type="int", help="Number of frames")
+    parser.add_option("-s", "--starting frame", dest="start_frame", type="int", help="Starting frame")
+    parser.add_option("-o", "--output", dest="outfile", type="string", help="Output log file")
+    (options, args) = parser.parse_args()
+    print "Setting things up..."
+    h = HBcalcs(options.cmsname, options.trjname, options.clusters)
+    print "Running calculations ..."
+    h.run_hb_analysis(options.frames, options.start_frame)
+
