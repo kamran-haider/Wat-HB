@@ -84,6 +84,61 @@ class HBcalcs:
         # obtain all non-water atom and global indices
         self.non_water_atom_ids = np.setxor1d(self.all_atom_ids, self.wat_atom_ids).astype(int)
         #self.non_water_gids = np.setxor1d(self.all_atom_gids,self.wat_atom_gids)
+        # These lists define the search space for solute water Hbond calculation
+        acc_list = []
+        don_list = []
+        acc_don_list = []
+        # To speed up calculations, we will pre-create donor atom, hydrogen pairs
+        self.don_H_pair_dict = {}
+        if self.non_water_atom_ids.size != 0:
+            frame_st = self.dsim.getFrameStructure(0)
+            for solute_at_id in self.non_water_atom_ids:
+                solute_atom = frame_st.atom[solute_at_id]
+                solute_atom_type = solute_atom.pdbres.strip(" ") + " " + solute_atom.pdbname.strip(" ")
+                if solute_atom.element in ["O", "S"]:
+                    # if O/S atom is bonded to an H, type it as donor and an acceptor
+                    if "H" in [bonded_atom.element for bonded_atom in solute_atom.bonded_atoms]:
+                        #print "Found donor-acceptor atom type: %i %s" % (solute_at_id, solute_atom_type)
+                        acc_don_list.append(solute_at_id)
+                        # create a dictionary entry for this atom, that will hold all atom, H id pairs 
+                        self.don_H_pair_dict[solute_at_id] = []
+                        for bonded_atom in solute_atom.bonded_atoms:
+                            if bonded_atom.element == "H":
+                                self.don_H_pair_dict[solute_at_id].append([solute_at_id, bonded_atom.index])
+
+                    # if O/S atom is not bonded to an H, type it as an acceptor
+                    else:
+                        #print "Found acceptor atom type: %i %s" % (solute_at_id, solute_atom_type)
+                        acc_list.append(solute_at_id)
+                if solute_atom.element in ["N"]:
+                    # if N atom is bonded to an H, type it as a donor
+                    if "H" in [bonded_atom.element for bonded_atom in solute_atom.bonded_atoms]:
+                        #print "Found donor atom type: %i %s" % (solute_at_id, solute_atom_type)
+                        don_list.append(solute_at_id)
+                        # create a dictionary entry for this atom, that will hold all atom, H id pairs 
+                        self.don_H_pair_dict[solute_at_id] = []
+                        for bonded_atom in solute_atom.bonded_atoms:
+                            if bonded_atom.element == "H":
+                                self.don_H_pair_dict[solute_at_id].append([solute_at_id, bonded_atom.index])
+
+
+                    # if N atom is not bonded to an H, type it as an acceptor
+                    else:
+                        #print "Found acceptor atom type: %i %s" % (solute_at_id, solute_atom_type)
+                        acc_list.append(solute_at_id)
+        #print don_list
+        #print acc_list
+        #print acc_don_list
+        self.solute_acc_ids = np.array(acc_list, dtype=np.int)
+        self.solute_acc_don_ids = np.array(acc_don_list, dtype=np.int)
+        self.solute_don_ids = np.array(don_list, dtype=np.int)
+        #for at in self.don_H_pair_dict:
+            #print at, self.don_H_pair_dict[at]
+
+ 
+
+
+
  
 #*********************************************************************************************#
     # retrieve water atom indices for selected oxygen indices 
@@ -170,13 +225,15 @@ class HBcalcs:
         hs_dict = {}
         cluster_centers = clusters.getXYZ()
         c_count = 0
+        data_fields = 14
         for h in cluster_centers: 
             hs_dict[c_count] = [tuple(h)] # create a dictionary key-value pair with voxel index as key and it's coords as
-            hs_dict[c_count].append(np.zeros(14, dtype="float64"))
+            hs_dict[c_count].append(np.zeros(data_fields, dtype="float64"))
             hs_dict[c_count].append([]) # to store E_nbr distribution
-            hs_dict[c_count].append([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [], [], [], []]) # to store hbond info
+            for i in range(data_fields+2): hs_dict[c_count][2].append([]) 
+            hs_dict[c_count].append([]) # to store hbond info
+            hs_dict[c_count].append([]) # to store hbond info
             c_count += 1
-        
         return hs_dict
 
 
@@ -249,7 +306,7 @@ class HBcalcs:
 
 #*********************************************************************************************#
     def _getTheta(self, frame, pos1, pos2, pos3):
-        "Adapted from Schrodinger pbc_manager class"
+        "Adapted from Schrodinger pbc_manager class."
         pos1.shape=1,3
         pos2.shape=1,3
         pos3.shape=1,3
@@ -289,20 +346,26 @@ class HBcalcs:
             frame_st = self.dsim.getFrameStructure(i)
             pos = frame.position
             oxygen_pos = pos[self.wat_oxygen_atom_ids-1] # obtain coords of O-atoms
+            acc_pos = pos[self.solute_acc_ids-1] # obtain coords of O-atoms
+            acc_don_pos = pos[self.solute_acc_don_ids-1] # obtain coords of O-atoms
+            don_pos = pos[self.solute_don_ids-1] # obtain coords of O-atoms
             # begin iterating over each cluster center in the cluster/HSA dictionary
             for cluster in self.hsa_data:
-                #print "processin cluster: ", cluster
+                print "processin cluster: ", cluster
                 nbr_indices = self.getNeighborAtoms(oxygen_pos, 1.0, self.hsa_data[cluster][0])
                 cluster_wat_oxygens = [self.wat_oxygen_atom_ids[nbr_index] for nbr_index in nbr_indices]
                 # begin iterating over water oxygens found in this cluster in current frame
                 for wat_O in cluster_wat_oxygens:
-                    self.hsa_data[cluster][1][0] += 1
+                    self.hsa_data[cluster][1][0] += 1 # raise water population by 1
                     cluster_water_all_atoms = self.getWaterIndices(np.asarray([wat_O]))
                     #print wat_O-1, pos[wat_O-1]
                     #print cluster_water_all_atoms
+                    # The following loop is for Hbondww calculations
+                    """
                     nbr_indices = self.getNeighborAtoms(oxygen_pos, 3.5, pos[wat_O-1])
                     firstshell_wat_oxygens = [self.wat_oxygen_atom_ids[nbr_index] for nbr_index in nbr_indices]
-                    self.hsa_data[cluster][1][2] += len(firstshell_wat_oxygens)
+                    self.hsa_data[cluster][1][3] += len(firstshell_wat_oxygens) # add  to cumulative sum
+                    self.hsa_data[cluster][2][3].append(len(firstshell_wat_oxygens)) # add nbrs to nbr timeseries
 
                     # begin iterating over neighboring oxygens of current water oxygen
                     for nbr_O in firstshell_wat_oxygens:
@@ -318,17 +381,93 @@ class HBcalcs:
                                         self._getTheta(frame, pos[wat_O-1], pos[nbr_O-1], pos[nbr_wat_all_atoms[2]-1]), 
                                         self._getTheta(frame, pos[nbr_O-1], pos[wat_O-1], pos[cluster_water_all_atoms[1]-1]), 
                                         self._getTheta(frame, pos[nbr_O-1], pos[wat_O-1], pos[cluster_water_all_atoms[2]-1])]
-                        #print min(theta_list)
-                        if min(theta_list) <= 35:
-                            self.hsa_data[cluster][1][3] += 1
+                        hbangle = min(theta_list) # min angle is a potential Hbond
+                        self.hsa_data[cluster][2][13].append(hbangle) # add to HBangleww timeseries (regardless of whether it is an Hbond or not)
+                        if hbangle <= 30: # if Hbond is made
+                            #print hbangle
+                            self.hsa_data[cluster][1][4] += 1 # add to cumulative sum of HBww
+                            # furthermore check if cluster water is acting as an acceptoir
+                            if theta_list.index(hbangle) in [0,1]:
+                                self.hsa_data[cluster][1][7] += 1 # add to cumulative of summ of HBwwacc
+                            # or as a donor
+                            else:
+                                self.hsa_data[cluster][1][8] += 1 # add to cumulative of summ of HBwwdon
+                    """
+                    # The following loop is for Hbondsw calculations
+                    # Divided in three steps, first solute acceptors, solute acceptor-donors and then solute donors
+                    solute_acc_nbr_indices = self.getNeighborAtoms(acc_pos, 3.5, pos[wat_O-1])
+                    solute_acceptors = [self.solute_acc_ids[nbr_index] for nbr_index in solute_acc_nbr_indices]
+                    for solute_acceptor in solute_acceptors:
+                        theta_list = [self._getTheta(frame, pos[solute_acceptor-1], pos[wat_O-1], pos[cluster_water_all_atoms[1]-1]), 
+                                        self._getTheta(frame, pos[solute_acceptor-1], pos[wat_O-1], pos[cluster_water_all_atoms[2]-1])]
+                        hbangle = min(theta_list) # min angle is a potential Hbond
+                        if hbangle <= 30: # if Hbond is made
+                            print "Hbond made between: ", solute_acceptor-1, wat_O-1, hbangle
 
+                    solute_don_nbr_indices = self.getNeighborAtoms(don_pos, 3.5, pos[wat_O-1])
+                    solute_donors = [self.solute_don_ids[nbr_index] for nbr_index in solute_don_nbr_indices]
+                    for solute_donor in solute_donors:
+                        theta_list = []
+                        for solute_don_H_pair in self.don_H_pair_dict[solute_donor]:
+                            #print solute_don_H_pair
+                            theta_list.append(self._getTheta(frame, pos[wat_O-1], pos[solute_don_H_pair[0]-1], pos[solute_don_H_pair[1]-1]))
+                        hbangle = min(theta_list) # min angle is a potential Hbond
+                        if hbangle <= 30: # if Hbond is made
+                            print "Hbond made between: ", solute_donor-1, wat_O-1, hbangle
+                    
+                    solute_acc_don_nbr_indices = self.getNeighborAtoms(acc_don_pos, 3.5, pos[wat_O-1])
+                    solute_acceptors_donors = [self.solute_acc_don_ids[nbr_index] for nbr_index in solute_acc_don_nbr_indices]
+                    for solute_acc_don in solute_acceptors_donors:
+                        for solute_acc_don_H_pair in self.don_H_pair_dict[solute_acc_don]:
+                            #print solute_acc_don_H_pair
+                            theta_list = [self._getTheta(frame, pos[wat_O-1], pos[solute_acc_don_H_pair[0]-1], pos[solute_acc_don_H_pair[1]-1]), 
+                                            self._getTheta(frame, pos[solute_acc_don_H_pair[0]-1], pos[wat_O-1], pos[cluster_water_all_atoms[1]-1]), 
+                                            self._getTheta(frame, pos[solute_acc_don_H_pair[0]-1], pos[wat_O-1], pos[cluster_water_all_atoms[2]-1])]
+                            hbangle = min(theta_list) # min angle is a potential Hbond
+                            if hbangle <= 30: # if Hbond is made
+                                print "Hbond made between: ", solute_acc_don-1, wat_O-1, hbangle
+
+                    
+
+#*********************************************************************************************#
+                   
+
+#*********************************************************************************************#
+
+    def normalizeClusterQuantities(self, n_frame):
+        rho_bulk = 0.0329 #molecules/A^3 # 0.0329
+        sphere_vol = (4/3)*np.pi*1.0
+        bulkwaterpersite = rho_bulk*n_frame*sphere_vol
+        
         for cluster in self.hsa_data:
-            print cluster, self.hsa_data[cluster][1][0], self.hsa_data[cluster][1][0]/options.frames, self.hsa_data[cluster][1][2]/self.hsa_data[cluster][1][0], self.hsa_data[cluster][1][3]/self.hsa_data[cluster][1][0]
+            # occupancy of the cluster
+            self.hsa_data[cluster][1][1] = self.hsa_data[cluster][1][0]/n_frame
+            # gO of the cluster
+            self.hsa_data[cluster][1][2] = self.hsa_data[cluster][1][0]/(bulkwaterpersite)
+            # normalized number of neighbors
+            self.hsa_data[cluster][1][3] /= self.hsa_data[cluster][1][0]
+            # normalized number of HBww
+            self.hsa_data[cluster][1][4] /= self.hsa_data[cluster][1][0]
+            # normalized number of HBsw
+            self.hsa_data[cluster][1][5] /= self.hsa_data[cluster][1][0]
+            # normalized number of HBtot
+            self.hsa_data[cluster][1][6] = self.hsa_data[cluster][1][4] + self.hsa_data[cluster][1][5]
+            # Calculate %Accww
+            self.hsa_data[cluster][1][7] = (self.hsa_data[cluster][1][7]/self.hsa_data[cluster][1][0])*100
+            # Calculate %Donww
+            self.hsa_data[cluster][1][8] = (self.hsa_data[cluster][1][8]/self.hsa_data[cluster][1][0])*100
+            # Calculate %Accsw
+            self.hsa_data[cluster][1][9] = (self.hsa_data[cluster][1][9]/self.hsa_data[cluster][1][0])*100
+            # Calculate %Donsw
+            self.hsa_data[cluster][1][10] = (self.hsa_data[cluster][1][10]/self.hsa_data[cluster][1][0])*100
+            # Calculate %HBww
+            self.hsa_data[cluster][1][11] = (self.hsa_data[cluster][1][4]/self.hsa_data[cluster][1][3])*100
+            # Calculate %HBsw, first normalize protein h-bonding nbrs
+            self.hsa_data[cluster][1][12] /= self.hsa_data[cluster][1][0]
+            self.hsa_data[cluster][1][13] = (self.hsa_data[cluster][1][5]/self.hsa_data[cluster][1][12])*100
 
 
-
-
-
+            #print self.hsa_data[cluster][1][0], self.hsa_data[cluster][1][1], self.hsa_data[cluster][1][6], self.hsa_data[cluster][1][11]
 
 
 
@@ -350,4 +489,7 @@ if (__name__ == '__main__') :
     print "Setting things up..."
     h = HBcalcs(options.cmsname, options.trjname, options.clusters)
     print "Running calculations ..."
+    t = time.time()
     h.run_hb_analysis(options.frames, options.start_frame)
+    print "Done! took %8.3f seconds." % (time.time() - t)
+    #h.normalizeClusterQuantities(options.frames)
