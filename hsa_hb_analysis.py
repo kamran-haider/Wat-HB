@@ -247,7 +247,6 @@ class HBcalcs:
         else:
             box = np.asarray([box_vectors[0], box_vectors[4], box_vectors[8]])
         return box
-#*********************************************************************************************#
 
 #*********************************************************************************************#
     def getNeighborAtoms(self, xyz, dist, point):
@@ -607,16 +606,16 @@ class HBcalcs:
             os.makedirs(directory)
         os.chdir(directory)
         # for each cluster, go through time series data
+        # for each cluster, go through time series data
         for cluster in self.hsa_data:
             cluster_index = "%03d_" % cluster
-            #print cluster_index
-            for data_field in self.hsa_data[cluster][2]:
+            #print cluster_index#, self.hsa_data[cluster][2]
+            for index, data_field in enumerate(self.hsa_data[cluster][2]):
                 # only write timeseries data that was stored during calculation
                 if len(data_field) != 0:
                     # create appropriate file name
-                    data_file = cluster_index + prefix + "_" + self.data_titles[self.hsa_data[cluster][2].index(data_field)] 
-                    #print self.hsa_data[cluster][2].index(data_field), self.data_titles[self.hsa_data[cluster][2].index(data_field)]
-                    #print data_field
+                    data_file = cluster_index + prefix + "_" + self.data_titles[index] 
+                    #print index, self.data_titles[index]
                     f =  open(data_file, "w")
                     # write each value from the timeseries into the file
                     for value in data_field:
@@ -625,6 +624,8 @@ class HBcalcs:
                     f.close()
         os.chdir("../")
 
+
+#*********************************************************************************************#
 
 
 
