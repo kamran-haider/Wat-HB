@@ -422,68 +422,72 @@ class HBcalcs:
                     # The following loop is for Hbondsw calculations
                     # Divided in three steps, first solute acceptors, solute acceptor-donors and then solute donors
                     # retrieve neighbor protein acceptor atoms
-                    if self.non_water_atom_ids.size != 0:
-                        solute_acc_nbr_indices = self.getNeighborAtoms(acc_pos, 3.5, pos[wat_O-1])
-                        solute_acceptors = [self.solute_acc_ids[nbr_index] for nbr_index in solute_acc_nbr_indices]
-                        solute_Hbond_partners += len(solute_acceptors)
+                    
+                    if self.non_water_atom_ids.size != 0: 
+                        if self.solute_acc_ids.size != 0:
+                            solute_acc_nbr_indices = self.getNeighborAtoms(acc_pos, 3.5, pos[wat_O-1])
+                            solute_acceptors = [self.solute_acc_ids[nbr_index] for nbr_index in solute_acc_nbr_indices]
+                            solute_Hbond_partners += len(solute_acceptors)
 
 
-                        # for each acceptor atom, find potential Hbonding angles with water
-                        for solute_acceptor in solute_acceptors:
-                            theta_list = [self._getTheta(frame, pos[solute_acceptor-1], pos[wat_O-1], pos[cluster_water_all_atoms[1]-1]), 
-                                            self._getTheta(frame, pos[solute_acceptor-1], pos[wat_O-1], pos[cluster_water_all_atoms[2]-1])]
-                            hbangle = min(theta_list) # min angle is a potential Hbond
-                            self.hsa_data[cluster][2][16].append(hbangle[0]) # add to HBanglesw timeseries (regardless of whether it is an Hbond or not)
-                            if hbangle <= 30: # if Hbond is made
-                                hbsw += 1
-                                #print "Hbond made between: ", solute_acceptor-1, wat_O-1, hbangle
-                                self.hsa_data[cluster][1][5] += 1 #add to cumulative sum of HBsw
-                                self.hsa_data[cluster][1][10] += 1 # add to cumulative of summ of HBswdon
-                                self.hsa_data[cluster][3].append(solute_acceptor)
-                        # retrieve neighbor protein donor atoms
-                        solute_don_nbr_indices = self.getNeighborAtoms(don_pos, 3.5, pos[wat_O-1])
-                        solute_donors = [self.solute_don_ids[nbr_index] for nbr_index in solute_don_nbr_indices]
-                        solute_Hbond_partners += len(solute_donors)
-                        # for each donor atom, find potential Hbonding angles with water
-                        for solute_donor in solute_donors:
-                            theta_list = []
-                            for solute_don_H_pair in self.don_H_pair_dict[solute_donor]:
-                                #print solute_don_H_pair
-                                theta_list.append(self._getTheta(frame, pos[wat_O-1], pos[solute_don_H_pair[0]-1], pos[solute_don_H_pair[1]-1]))
-                            hbangle = min(theta_list) # min angle is a potential Hbond
-                            self.hsa_data[cluster][2][16].append(hbangle[0]) # add to HBanglesw timeseries (regardless of whether it is an Hbond or not)
-                            if hbangle <= 30: # if Hbond is made
-                                hbsw += 1
-                                #print "Hbond made between: ", solute_donor-1, wat_O-1, hbangle
-                                self.hsa_data[cluster][1][5] += 1 # add to cumulative sum of HBsw
-                                self.hsa_data[cluster][1][9] += 1 # add to cumulative of summ of HBswacc
-                                self.hsa_data[cluster][4].append(solute_donor)
-
-
-                        # retrieve neighbor protein atoms that can act as both donors and acceptors
-                        solute_acc_don_nbr_indices = self.getNeighborAtoms(acc_don_pos, 3.5, pos[wat_O-1])
-                        solute_acceptors_donors = [self.solute_acc_don_ids[nbr_index] for nbr_index in solute_acc_don_nbr_indices]
-                        solute_Hbond_partners += len(solute_acceptors_donors)
-                        for solute_acc_don in solute_acceptors_donors:
-                            for solute_acc_don_H_pair in self.don_H_pair_dict[solute_acc_don]:
-                                #print solute_acc_don_H_pair
-                                theta_list = [self._getTheta(frame, pos[wat_O-1], pos[solute_acc_don_H_pair[0]-1], pos[solute_acc_don_H_pair[1]-1]), 
-                                                self._getTheta(frame, pos[solute_acc_don_H_pair[0]-1], pos[wat_O-1], pos[cluster_water_all_atoms[1]-1]), 
-                                                self._getTheta(frame, pos[solute_acc_don_H_pair[0]-1], pos[wat_O-1], pos[cluster_water_all_atoms[2]-1])]
+                            # for each acceptor atom, find potential Hbonding angles with water
+                            for solute_acceptor in solute_acceptors:
+                                theta_list = [self._getTheta(frame, pos[solute_acceptor-1], pos[wat_O-1], pos[cluster_water_all_atoms[1]-1]), 
+                                                self._getTheta(frame, pos[solute_acceptor-1], pos[wat_O-1], pos[cluster_water_all_atoms[2]-1])]
                                 hbangle = min(theta_list) # min angle is a potential Hbond
                                 self.hsa_data[cluster][2][16].append(hbangle[0]) # add to HBanglesw timeseries (regardless of whether it is an Hbond or not)
                                 if hbangle <= 30: # if Hbond is made
                                     hbsw += 1
-                                    #print "Hbond made between: ", solute_acc_don-1, wat_O-1, hbangle
+                                    #print "Hbond made between: ", solute_acceptor-1, wat_O-1, hbangle
                                     self.hsa_data[cluster][1][5] += 1 #add to cumulative sum of HBsw
-                                    # furthermore check if cluster water is acting as an acceptoir
-                                    if theta_list.index(hbangle) == 0:
-                                        self.hsa_data[cluster][1][9] += 1 # add to cumulative of summ of HBswacc
-                                        self.hsa_data[cluster][4].append(solute_acc_don)
-                                    # or as a donor
-                                    else:
-                                        self.hsa_data[cluster][1][10] += 1 # add to cumulative of summ of HBswdon
-                                    self.hsa_data[cluster][3].append(solute_acc_don)
+                                    self.hsa_data[cluster][1][10] += 1 # add to cumulative of summ of HBswdon
+                                    self.hsa_data[cluster][3].append(solute_acceptor)
+                            # retrieve neighbor protein donor atoms
+                        if self.solute_don_ids.size != 0:
+                            solute_don_nbr_indices = self.getNeighborAtoms(don_pos, 3.5, pos[wat_O-1])
+                            solute_donors = [self.solute_don_ids[nbr_index] for nbr_index in solute_don_nbr_indices]
+                            solute_Hbond_partners += len(solute_donors)
+                            # for each donor atom, find potential Hbonding angles with water
+                            for solute_donor in solute_donors:
+                                theta_list = []
+                                for solute_don_H_pair in self.don_H_pair_dict[solute_donor]:
+                                    #print solute_don_H_pair
+                                    theta_list.append(self._getTheta(frame, pos[wat_O-1], pos[solute_don_H_pair[0]-1], pos[solute_don_H_pair[1]-1]))
+                                hbangle = min(theta_list) # min angle is a potential Hbond
+                                self.hsa_data[cluster][2][16].append(hbangle[0]) # add to HBanglesw timeseries (regardless of whether it is an Hbond or not)
+                                if hbangle <= 30: # if Hbond is made
+                                    hbsw += 1
+                                    #print "Hbond made between: ", solute_donor-1, wat_O-1, hbangle
+                                    self.hsa_data[cluster][1][5] += 1 # add to cumulative sum of HBsw
+                                    self.hsa_data[cluster][1][9] += 1 # add to cumulative of summ of HBswacc
+                                    self.hsa_data[cluster][4].append(solute_donor)
+
+                        if self.solute_acc_don_ids.size != 0:
+
+                            # retrieve neighbor protein atoms that can act as both donors and acceptors
+                            solute_acc_don_nbr_indices = self.getNeighborAtoms(acc_don_pos, 3.5, pos[wat_O-1])
+                            solute_acceptors_donors = [self.solute_acc_don_ids[nbr_index] for nbr_index in solute_acc_don_nbr_indices]
+                            solute_Hbond_partners += len(solute_acceptors_donors)
+                            for solute_acc_don in solute_acceptors_donors:
+                                for solute_acc_don_H_pair in self.don_H_pair_dict[solute_acc_don]:
+                                    #print solute_acc_don_H_pair
+                                    theta_list = [self._getTheta(frame, pos[wat_O-1], pos[solute_acc_don_H_pair[0]-1], pos[solute_acc_don_H_pair[1]-1]), 
+                                                    self._getTheta(frame, pos[solute_acc_don_H_pair[0]-1], pos[wat_O-1], pos[cluster_water_all_atoms[1]-1]), 
+                                                    self._getTheta(frame, pos[solute_acc_don_H_pair[0]-1], pos[wat_O-1], pos[cluster_water_all_atoms[2]-1])]
+                                    hbangle = min(theta_list) # min angle is a potential Hbond
+                                    self.hsa_data[cluster][2][16].append(hbangle[0]) # add to HBanglesw timeseries (regardless of whether it is an Hbond or not)
+                                    if hbangle <= 30: # if Hbond is made
+                                        hbsw += 1
+                                        #print "Hbond made between: ", solute_acc_don-1, wat_O-1, hbangle
+                                        self.hsa_data[cluster][1][5] += 1 #add to cumulative sum of HBsw
+                                        # furthermore check if cluster water is acting as an acceptoir
+                                        if theta_list.index(hbangle) == 0:
+                                            self.hsa_data[cluster][1][9] += 1 # add to cumulative of summ of HBswacc
+                                            self.hsa_data[cluster][4].append(solute_acc_don)
+                                        # or as a donor
+                                        else:
+                                            self.hsa_data[cluster][1][10] += 1 # add to cumulative of summ of HBswdon
+                                        self.hsa_data[cluster][3].append(solute_acc_don)
                         
                         # add to the cumulative of solute H-bonding neighbors
                         self.hsa_data[cluster][1][12] += solute_Hbond_partners
@@ -499,7 +503,7 @@ class HBcalcs:
 
                         self.hsa_data[cluster][1][13] += percent_hbsw # add to cumulative sum of percentHBsw
                         self.hsa_data[cluster][2][13].append(percent_hbsw) # append to percentHBsw timeseries
-
+                    
 #*********************************************************************************************#
                    
 
@@ -567,8 +571,8 @@ class HBcalcs:
 #*********************************************************************************************#
 
     def writeHBsummary(self, prefix):
-        f = open(prefix+"_hsa_summary.txt", "w")
-        header_2 = "index x y z wat occ gO nbrs HBww HBsw HBtot percentHBww Enclosure soluteHBnbrs percentHBsw Acc_ww Don_ww Acc_sw Don_sw Solute-Don Solute-Acc\n"
+        f = open(prefix+"_hsa_hb_summary.txt", "w")
+        header_2 = "index x y z wat occ gO nbrs HBww HBsw HBtot Enclosure percentHBww soluteHBnbrs percentHBsw Acc_ww Don_ww Acc_sw Don_sw Solute-Don Solute-Acc\n"
         f.write(header_2)
         for cluster in self.hsa_data:
             d = self.hsa_data[cluster]
@@ -598,7 +602,7 @@ class HBcalcs:
     def writeTimeSeries(self, prefix):
         cwd = os.getcwd()
         # create directory to store detailed data for individual columns in HSA
-        directory = cwd + "/" + prefix+"_cluster_data"
+        directory = cwd + "/" + prefix+"_cluster_hb_data"
         if not os.path.exists(directory):
             os.makedirs(directory)
         os.chdir(directory)
