@@ -234,6 +234,7 @@ class HBcalcs:
             for i in range(data_fields+2): hs_dict[c_count][2].append([]) 
             hs_dict[c_count].append([]) # to store hbond info (protein acceptors)
             hs_dict[c_count].append([]) # to store hbond info (protein donors)
+            hs_dict[c_count].append(np.zeros(data_fields+2, dtype="float64")) # to store error info on each timeseries
             c_count += 1
         return hs_dict
 
@@ -595,6 +596,19 @@ class HBcalcs:
             f.write(l)
         f.close()
 
+        e = open(prefix+"_hsa_hb_stats.txt", "w")
+        header_3 = "index nbrs HBww HBsw HBtot Enclosure percentHBww soluteHBnbrs percentHBsw Acc_ww Don_ww Acc_sw Don_sw\n"
+        e.write(header_3)
+        for cluster in self.hsa_data:
+            d = self.hsa_data[cluster]
+            l = "%d %f %f %f %f %f %f %f %f %f %f %f %f\n" % \
+                ( cluster, d[5][3], d[5][4], d[5][5], d[5][6], d[5][14],\
+                d[5][11], d[5][12], d[5][13], \
+                d[5][7], d[5][8], d[5][9], d[5][10])
+            #print l
+            e.write(l)
+        e.close()
+
 
 #*********************************************************************************************#
 
@@ -622,6 +636,7 @@ class HBcalcs:
                     #    print value
                         f.write(str(value)+"\n")
                     f.close()
+                    self.hsa_data[cluster][5][index] += np.std(np.asarray(data_field))
         os.chdir("../")
 
 
@@ -650,8 +665,8 @@ if (__name__ == '__main__') :
     h.run_hb_analysis(options.frames, options.start_frame)
     h.normalizeClusterQuantities(options.frames)
     print "Done! took %8.3f seconds." % (time.time() - t)
-    print "Writing summary..."
-    h.writeHBsummary(options.prefix)
     print "Writing timeseries data ..."
     h.writeTimeSeries(options.prefix)
+    print "Writing summary..."
+    h.writeHBsummary(options.prefix)
     
