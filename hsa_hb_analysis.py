@@ -352,9 +352,13 @@ class HBcalcs:
             don_pos = pos[self.solute_don_ids-1] # obtain coords of O-atoms
             d_clust = _DistanceCell(oxygen_pos, 1.0)
             d_nbrs = _DistanceCell(oxygen_pos, 3.5)
-            d_acc = _DistanceCell(acc_pos, 3.5)
-            d_don = _DistanceCell(don_pos, 3.5)
-            d_acc_don = _DistanceCell(acc_don_pos, 3.5)
+            if self.non_water_atom_ids.size != 0:
+                if self.solute_acc_ids.size != 0:
+                    d_acc = _DistanceCell(acc_pos, 3.5)
+                if self.solute_don_ids.size != 0:
+                    d_don = _DistanceCell(don_pos, 3.5)
+                if self.solute_acc_don_ids.size != 0:
+                    d_acc_don = _DistanceCell(acc_don_pos, 3.5)
 
             # begin iterating over each cluster center in the cluster/HSA dictionary
             for cluster in self.hsa_data:
@@ -400,6 +404,7 @@ class HBcalcs:
                         #print pos[wat_O-1], pos[nbr_O-1], pos[nbr_wat_all_atoms[1]-1]
                         #print "angle 1: ", self._getTheta(frame, pos[wat_O-1], pos[nbr_O-1], pos[nbr_wat_all_atoms[1]-1])
                         # list of all potential H-bond angles between the water-water pair
+                        # theta angle = Acceptor-Donor-Hydrogen
                         theta_list = [self._getTheta(frame, pos[wat_O-1], pos[nbr_O-1], pos[nbr_wat_all_atoms[1]-1]), 
                                         self._getTheta(frame, pos[wat_O-1], pos[nbr_O-1], pos[nbr_wat_all_atoms[2]-1]), 
                                         self._getTheta(frame, pos[nbr_O-1], pos[wat_O-1], pos[cluster_water_all_atoms[1]-1]), 
