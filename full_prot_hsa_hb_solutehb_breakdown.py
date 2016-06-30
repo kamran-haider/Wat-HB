@@ -83,8 +83,11 @@ class HBcalcs:
         # obtain all non-water atom and global indices
         self.non_water_atom_ids = np.setxor1d(self.all_atom_ids, self.wat_atom_ids).astype(int)
         # here add commands to restrict non-water atom ids to within 5.0A of ligand
+        #***************************************************************
+        # Tag protein atoms that are near ligand
         solute_indices_near_lig = []
         ligand = structure.StructureReader(ligand_file).next()
+        self.ligand = ligand
         lig_atom_coords = ligand.getXYZ()
         solute_pos = frame.position[self.non_water_atom_ids-1]
         d_solute_nbrs = _DistanceCell(solute_pos, 5)
@@ -95,10 +98,9 @@ class HBcalcs:
                     solute_indices_near_lig.append(solute_nbr_index)
         #print self.non_water_atom_ids
         self.non_water_atom_ids_near_lig = [self.non_water_atom_ids[nbr_index] for nbr_index in solute_indices_near_lig]
-
-
-        #self.non_water_gids = np.setxor1d(self.all_atom_gids,self.wat_atom_gids)
-        # These lists define the search space for solute water Hbond calculation
+        #self.non_water_atom_ids_near_lig = self.non_water_atom_ids
+        #***************************************************************
+        # Type protein atoms
         acc_list = []
         don_list = []
         acc_don_list = []
@@ -119,7 +121,6 @@ class HBcalcs:
                         for bonded_atom in solute_atom.bonded_atoms:
                             if bonded_atom.element == "H":
                                 self.don_H_pair_dict[solute_at_id].append([solute_at_id, bonded_atom.index])
-
                     # if O/S atom is not bonded to an H, type it as an acceptor
                     else:
                         #print "Found acceptor atom type: %i %s" % (solute_at_id, solute_atom_type)
@@ -134,9 +135,6 @@ class HBcalcs:
                         for bonded_atom in solute_atom.bonded_atoms:
                             if bonded_atom.element == "H":
                                 self.don_H_pair_dict[solute_at_id].append([solute_at_id, bonded_atom.index])
-
-
-                    # if N atom is not bonded to an H, type it as an acceptor
                     else:
                         #print "Found acceptor atom type: %i %s" % (solute_at_id, solute_atom_type)
                         acc_list.append(solute_at_id)
@@ -149,10 +147,48 @@ class HBcalcs:
         self.prot_hbond_data = {}
         for hb_group in np.concatenate((self.solute_acc_ids, self.solute_acc_don_ids, self.solute_don_ids)):
             hb_group_name = self.dsim.cst.atom[hb_group].getResidue().pdbres.strip() + str(self.dsim.cst.atom[hb_group].getResidue().resnum) + " " + self.dsim.cst.atom[hb_group].pdbname.strip()
-            self.prot_hbond_data[hb_group] = [hb_group_name, np.zeros(6, dtype="float64")]
+            self.prot_hbond_data[hb_group] = [hb_group_name, np.zeros(10, dtype="float64")]
             #print self.prot_hbond_data[hb_group]
+        #***************************************************************
+        # Type ligand atoms
+        lig_acc_list = []
+        lig_don_list = []
+        lig_acc_don_list = []
+        self.lig_don_H_pair_dict = {}
+        if len(ligand.atom) != 0:
+            for lig_at in ligand.atom:
+                lig_atom_type = lig_at.pdbres.strip(" ") + " " + lig_at.pdbname.strip(" ")
+                if lig_at.element in ["O", "S"]:
+                    # if O/S atom is bonded to an H, type it as donor and an acceptor
+                    if "H" in [bonded_atom.element for bonded_atom in lig_at.bonded_atoms]:
+                        #print "Found donor-acceptor atom type: %i %s" % (lig_at.index, lig_atom_type)
+                        lig_acc_don_list.append(lig_at.index)
+                        # create a dictionary entry for this atom, that will hold all atom, H id pairs 
+                        self.lig_don_H_pair_dict[lig_at.index] = []
+                        for bonded_atom in lig_at.bonded_atoms:
+                            if bonded_atom.element == "H":
+                                self.lig_don_H_pair_dict[lig_at.index].append([lig_at.index, bonded_atom.index])
+                    # if O/S atom is not bonded to an H, type it as an acceptor
+                    else:
+                        #print "Found acceptor atom type: %i %s" % (lig_at.index, lig_atom_type)
+                        lig_acc_list.append(lig_at.index)
+                if lig_at.element in ["N"]:
+                    # if N atom is bonded to an H, type it as a donor
+                    if "H" in [bonded_atom.element for bonded_atom in lig_at.bonded_atoms]:
+                        #print "Found donor atom type: %i %s" % (lig_at.index, lig_atom_type)
+                        lig_don_list.append(lig_at.index)
+                        # create a dictionary entry for this atom, that will hold all atom, H id pairs 
+                        self.lig_don_H_pair_dict[lig_at.index] = []
+                        for bonded_atom in lig_at.bonded_atoms:
+                            if bonded_atom.element == "H":
+                                self.lig_don_H_pair_dict[lig_at.index].append([lig_at.index, bonded_atom.index])
+                    else:
+                        #print "Found acceptor atom type: %i %s" % (lig_at.index, lig_atom_type)
+                        lig_acc_list.append(lig_at.index)
+        self.ligand_acc_ids = np.array(lig_acc_list, dtype=np.int)
+        self.ligand_acc_don_ids = np.array(lig_acc_don_list, dtype=np.int)
+        self.ligand_don_ids = np.array(lig_don_list, dtype=np.int)
 
- 
 #*********************************************************************************************#
     # retrieve water atom indices for selected oxygen indices 
     def getWaterIndices(self, oxygen_atids):
@@ -297,11 +333,13 @@ class HBcalcs:
             # begin iterating over solute acceptor atoms
             for solute_acceptor in np.concatenate((self.solute_acc_ids, self.solute_acc_don_ids)):
                 # this condition restricts calculation to groups near ligand
-                if solute_acceptor in self.non_water_atom_ids_near_lig:
+                    if solute_acceptor in self.non_water_atom_ids_near_lig:
+                        self.prot_hbond_data[solute_acceptor][1][8] = 1.0
                     # obtain water neighbors (oxygens) 
                     wat_nbr_indices = d_wat_nbrs.query_nbrs(pos[solute_acceptor -1])
                     nbr_wat_oxygens = [self.wat_oxygen_atom_ids[nbr_index] for nbr_index in wat_nbr_indices]
                     self.prot_hbond_data[solute_acceptor][1][0] += len(nbr_wat_oxygens)
+                    # This is to keep track of number of frames, non-zero water neighbors were found
                     if len(nbr_wat_oxygens) > 0:
                         self.prot_hbond_data[solute_acceptor][1][1] += 1
                     # iterate over each neighbor water oxygen for this acceptor
@@ -311,13 +349,14 @@ class HBcalcs:
                         theta_list = [self._getTheta(frame, pos[solute_acceptor-1], pos[wat_O-1], pos[nbr_water_all_atoms[1]-1]), 
                                         self._getTheta(frame, pos[solute_acceptor-1], pos[wat_O-1], pos[nbr_water_all_atoms[2]-1])]
                         hbangle = min(theta_list) # min angle is a potential Hbond
-                        if hbangle <= 20: # if Hbond is made
+                        if hbangle <= 30: # if Hbond is made
                             self.prot_hbond_data[solute_acceptor][1][2] += 1
             # begin iterating over solute donor atoms
             for solute_donor in np.concatenate((self.solute_don_ids, self.solute_acc_don_ids)):
-                if solute_donor in self.non_water_atom_ids_near_lig:
-                #for solute_donor in [2676, 2678, 548, 551, 2122]:
-                #for solute_donor in [548]:
+                    if solute_donor in self.non_water_atom_ids_near_lig:
+                        self.prot_hbond_data[solute_donor][1][8] = 1.0
+                    #for solute_donor in [2676, 2678, 548, 551, 2122]:
+                    #for solute_donor in [548]:
                     # obtain water neighbors for this donor
                     wat_nbr_indices = d_wat_nbrs.query_nbrs(pos[solute_donor -1])
                     nbr_wat_oxygens = [self.wat_oxygen_atom_ids[nbr_index] for nbr_index in wat_nbr_indices]
@@ -338,7 +377,7 @@ class HBcalcs:
             #*****************************************************************#
             # begin iterating over solute acceptor atoms
             for solute_acceptor in np.concatenate((self.solute_acc_ids, self.solute_acc_don_ids)):
-                if solute_acceptor in self.non_water_atom_ids_near_lig:
+                    #if solute_acceptor in self.non_water_atom_ids_near_lig:
                     # obtain neighboring protein donors 
                     prot_don_nbr_indices = d_prot_don.query_nbrs(pos[solute_acceptor -1])
                     prot_don_nbrs = [np.concatenate((self.solute_don_ids, self.solute_acc_don_ids))[nbr_index] for nbr_index in prot_don_nbr_indices]
@@ -357,7 +396,7 @@ class HBcalcs:
 
             for solute_donor in np.concatenate((self.solute_don_ids, self.solute_acc_don_ids)):
             #for solute_donor in [3371]:
-                if solute_donor in self.non_water_atom_ids_near_lig:
+                    #if solute_donor in self.non_water_atom_ids_near_lig:
                     # obtain neighboring protein acceptors
                     prot_acc_nbr_indices = d_prot_acc.query_nbrs(pos[solute_donor -1])
                     prot_acc_nbrs = [np.concatenate((self.solute_acc_ids, self.solute_acc_don_ids))[nbr_index] for nbr_index in prot_acc_nbr_indices]
@@ -374,29 +413,72 @@ class HBcalcs:
                             if theta <= 20:
                                 #print "Hbond made between: ", solute_donor-1, acc-1, theta
                                 self.prot_hbond_data[solute_donor][1][5] += 1
+            
+            #*****************************************************************#
+            # Calculate protein H-bonds with ligand
+            #*****************************************************************#
+            # begin iterating over solute acceptor atoms
+            #lig_acc_pos = self.ligand.getXYZ()[np.concatenate((self.ligand_acc_ids, self.ligand_acc_don_ids)) - 1] # obtain coords of protein acceptor
+            #lig_don_pos = self.ligand.getXYZ()[np.concatenate((self.ligand_don_ids, self.ligand_acc_don_ids)) - 1] # obtain coords of protein acceptor
+            # Iterate over each ligand acceptor 
+            for lig_acceptor in np.concatenate((self.ligand_acc_ids, self.ligand_acc_don_ids)):
+                    # obtain neighboring protein donors 
+                    prot_don_nbr_indices = d_prot_don.query_nbrs(self.ligand.getXYZ()[lig_acceptor - 1])
+                    prot_don_nbrs = [np.concatenate((self.solute_don_ids, self.solute_acc_don_ids))[nbr_index] for nbr_index in prot_don_nbr_indices]
+                    # iterate over each neighboring protein donor for this acceptor
+                    for don in prot_don_nbrs:
+                        # for each neighboring protein donor, iterate over each D-H group (e.g., Lys NH_3{+} has three N-H groups)
+                        for solute_don_H_pair in self.don_H_pair_dict[don]:
+                            # obtain acceptoor-donor-hydrogen angle
+                            #print solute_don_H_pair
+                            theta = self._getTheta(frame, self.ligand.getXYZ()[lig_acceptor-1], pos[solute_don_H_pair[0]-1], pos[solute_don_H_pair[1]-1])
+                            #theta_2 = self._getTheta(frame, pos[solute_don_H_pair[0]-1], pos[solute_don_H_pair[1]-1], pos[wat_O-1])
+                            if theta <= 30:
+                                #print "Hbond made between: ", lig_acceptor-1, solute_donor-1, theta
+                                self.prot_hbond_data[don][1][6] += 1
+
+            #print np.concatenate((self.ligand_don_ids, self.ligand_acc_don_ids))
+            for lig_donor in np.concatenate((self.ligand_don_ids, self.ligand_acc_don_ids)):
+                    # obtain neighboring protein acceptors
+                    prot_acc_nbr_indices = d_prot_acc.query_nbrs(self.ligand.getXYZ()[lig_donor -1])
+                    prot_acc_nbrs = [np.concatenate((self.solute_acc_ids, self.solute_acc_don_ids))[nbr_index] for nbr_index in prot_acc_nbr_indices]
+                    # iterate over each D-H group of this donor
+                    #print np.concatenate((self.solute_acc_ids, self.solute_acc_don_ids))
+                    for lig_don_H_pair in self.lig_don_H_pair_dict[lig_donor]:
+                        # check current D-H group with each neighboring acceptor
+                        for acc in prot_acc_nbrs:
+                            # obtain acceptoor-donor-hydrogen angle
+                            theta = self._getTheta(frame, self.ligand.getXYZ()[lig_don_H_pair[1]-1], self.ligand.getXYZ()[lig_don_H_pair[0]-1], pos[acc-1])
+                            #print solute_don_H_pair[1]-1, solute_don_H_pair[0]-1, acc-1, theta
+                            #theta_2 = self._getTheta(frame, pos[solute_don_H_pair[0]-1], pos[solute_don_H_pair[1]-1], pos[wat_O-1])
+                            if theta <= 30:
+                                #print "Hbond made between: ", lig_donor-1, acc-1, theta
+                                self.prot_hbond_data[acc][1][7] += 1
 
 #*********************************************************************************************#
 
     def normalizeClusterQuantities(self, n_frame):
         for hb_group in self.prot_hbond_data:
-            if hb_group in self.non_water_atom_ids_near_lig:
+            #if hb_group in self.non_water_atom_ids_near_lig:
                 self.prot_hbond_data[hb_group][1][0] /= n_frame
                 self.prot_hbond_data[hb_group][1][2] /= n_frame
                 self.prot_hbond_data[hb_group][1][3] /= n_frame
                 self.prot_hbond_data[hb_group][1][4] /= n_frame
                 self.prot_hbond_data[hb_group][1][5] /= n_frame
+                self.prot_hbond_data[hb_group][1][6] /= n_frame
+                self.prot_hbond_data[hb_group][1][7] /= n_frame
 
 
 #*********************************************************************************************#
 
     def writeHBsummary(self, prefix):
         f = open(prefix+"_prot_hb_summary.txt", "w")
-        header = "atom_index residue_name atom_name wat_nbrs hb_acc_sw hb_don_sw hb_acc_ss hb_don_ss\n"
+        header = "atom_index residue_name atom_name wat_nbrs binding_site pw_hb pp_hb pl_hb pw_hb_acc pw_hb_don pp_hb_acc pp_hb_don_ss pl_hb_acc pl_hb_don_ss\n"
         f.write(header)
         for hb_group in self.prot_hbond_data:
-            if hb_group in self.non_water_atom_ids_near_lig:
+            #if hb_group in self.non_water_atom_ids_near_lig:
                 d = self.prot_hbond_data[hb_group][1]
-                l = "%i %s %f %f %f %f %f\n" % (hb_group, self.prot_hbond_data[hb_group][0], d[0], d[2], d[3], d[4], d[5])
+                l = "%i %s %f %s %f %f %f %f %f %f %f %f %f\n" % (hb_group, self.prot_hbond_data[hb_group][0], d[0], bool(d[8]), d[2]+d[3], d[4]+d[5], d[6]+d[7], d[2], d[3], d[4], d[5], d[6], d[7])
                 f.write(l)
         f.close()
 
@@ -458,7 +540,8 @@ class _DistanceCell:
         Given a coordinate point, return all point indexes (0-indexed) that
         are within the threshold distance from it.
         """
-        cell0 = np.array((point - self.min_) / self.cell_size, dtype=np.int)
+        cell0 = np.array((point - self.min_) / self.cell_size, 
+                                     dtype=np.int)
         tuple0 = tuple(cell0)
         near = []
         for index_array in tuple0 + self.neighbor_array:

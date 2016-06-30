@@ -225,16 +225,16 @@ class HBcalcs:
         self.data_titles = ["wat", "occ", "gO", "nbrs", 
                         "HBww", "HBsw", "HBtot", "Acc_ww", "Don_ww", "Acc_sw", "Don_sw", 
                         "percentHBww", "soluteHBnbrs", "percentHBsw", "enclosure", 
-                        "HBangleww", "HBanglesw"]
+                        "HBangleww", "HBanglesw", "Nbrdist"]
 
         for h in cluster_centers: 
             hs_dict[c_count] = [tuple(h)] # create a dictionary key-value pair with voxel index as key and it's coords as
             hs_dict[c_count].append(np.zeros(data_fields, dtype="float64"))
             hs_dict[c_count].append([]) # to store E_nbr distribution
-            for i in range(data_fields+2): hs_dict[c_count][2].append([]) 
+            for i in range(data_fields+3): hs_dict[c_count][2].append([]) 
             hs_dict[c_count].append([]) # to store hbond info (protein acceptors)
             hs_dict[c_count].append([]) # to store hbond info (protein donors)
-            hs_dict[c_count].append(np.zeros(data_fields+2, dtype="float64")) # to store error info on each timeseries
+            hs_dict[c_count].append(np.zeros(data_fields+3, dtype="float64")) # to store error info on each timeseries
             hs_dict[c_count].append({})
             c_count += 1
         #print hs_dict
@@ -334,6 +334,58 @@ class HBcalcs:
             cos_theta[cos_theta >  1.0] =  1.0
             cos_theta[cos_theta < -1.0] = -1.0
         theta = np.arccos(cos_theta) * degrees_per_rad
+        return theta[0]
+
+#*********************************************************************************************#
+    def _getPhi(self, frame, pos0, pos1, pos2, pos3):
+        "Adapted from Schrodinger pbc_manager class."
+        pos0.shape=1,3
+        pos1.shape=1,3
+        pos2.shape=1,3
+        pos3.shape=1,3
+        print "calculating phi..."
+        # First we find the plane equations
+        # Plane 1 (atomsels 1, 2, 3)
+        r12 = frame.getMinimalDifference(pos2, pos1)
+        r32 = frame.getMinimalDifference(pos2, pos3)
+        c1232 = np.cross(r12, r32)[0] # = the plane normal
+        norm = np.absolute(np.sum(c1232*pos0[0]))
+        denom = np.sqrt(np.sum(c1232**2, axis=0)) * np.sqrt(np.sum(pos0**2, axis=1))
+        phi = np.arcsin(norm/denom[0]) * degrees_per_rad
+        return phi
+#*********************************************************************************************#
+    def _getOmega(self, frame, pos1, pos2, pos3, pos4):
+        "Adapted from Schrodinger pbc_manager class."
+        r12 = frame.getMinimalDifference(pos2, pos1)
+        r32 = frame.getMinimalDifference(pos2, pos3)
+        r42 = frame.getMinimalDifference(pos2, pos4)
+
+        c1232 = numpy.cross(r12, r32)
+        c4232 = numpy.cross(r42, r32)
+
+        norm = numpy.sqrt(numpy.sum(c1232**2, axis=1) *
+                          numpy.sum(c4232**2, axis=1))
+        cos_theta = numpy.sum(c1232 * c4232, axis=1)/norm
+
+        # FIXME: is the isnan check sufficient?
+
+        # handle problem when pos1 or pos3 == pos2; make theta = 0.0 in this
+        # case
+        if numpy.any(numpy.isnan(cos_theta)):
+            cos_theta[numpy.isnan(cos_theta)] = 1.0
+
+        # handle numerical roundoff issue where abs(cos_theta) may be
+        # greater than 1
+        if numpy.any(numpy.abs(cos_theta) > 1.0):
+            cos_theta[cos_theta >  1.0] =  1.0
+            cos_theta[cos_theta < -1.0] = -1.0
+
+        theta = numpy.arccos(cos_theta) * degrees_per_rad
+
+        # Get the proper sign
+        sign_check = numpy.sum(r12 * c4232, axis=1)
+        theta[sign_check < 0.0] *= -1.0
+
         return theta
 
 
@@ -354,7 +406,7 @@ class HBcalcs:
             acc_don_pos = pos[self.solute_acc_don_ids-1] # obtain coords of O-atoms
             don_pos = pos[self.solute_don_ids-1] # obtain coords of O-atoms
             d_clust = _DistanceCell(oxygen_pos, 1.0)
-            d_nbrs = _DistanceCell(oxygen_pos, 3.5)
+            d_nbrs = _DistanceCell(oxygen_pos, 5.0)
             if self.non_water_atom_ids.size != 0:
                 if self.solute_acc_ids.size != 0:
                     d_acc = _DistanceCell(acc_pos, 3.5)
@@ -386,22 +438,25 @@ class HBcalcs:
                     #print wat_O-1, pos[wat_O-1]
                     #print cluster_water_all_atoms
                     #*********************************************************************************************************************************#
-                    # The following loop is for Hbondww calculations
-                    
+                    # The following loop is for Hbondww calculations                    
                     nbr_indices = d_nbrs.query_nbrs(pos[wat_O-1])
                     firstshell_wat_oxygens = [self.wat_oxygen_atom_ids[nbr_index] for nbr_index in nbr_indices]
                     wat_nbrs += len(firstshell_wat_oxygens)
                     self.hsa_data[cluster][1][3] += wat_nbrs # add  to cumulative sum
                     self.hsa_data[cluster][2][3].append(wat_nbrs) # add nbrs to nbr timeseries
                     # Enclosure calculations
-                    enclosure += 1 - (wat_nbrs/5.25)
-                    if enclosure < 0.0:
-                        enclosure = 0.0
-                    self.hsa_data[cluster][1][14] += enclosure # add value to cumulative sum
-                    self.hsa_data[cluster][2][14].append(enclosure) # append to timeseries
-
+                    #enclosure += 1 - (wat_nbrs/5.25)
+                    #if enclosure < 0.0:
+                    #    enclosure = 0.0
+                    #self.hsa_data[cluster][1][14] += enclosure # add value to cumulative sum
+                    #self.hsa_data[cluster][2][14].append(enclosure) # append to timeseries
                     # begin iterating over neighboring oxygens of current water oxygen
                     for nbr_O in firstshell_wat_oxygens:
+                        theta = 0.0
+                        psi = 0.0
+                        phi = 0.0
+                        chi = 0.0
+                        omega = 0.0
                         #print nbr_O
                         nbr_wat_all_atoms = self.getWaterIndices(np.asarray([nbr_O]))
                         #print nbr_wat_all_atoms
@@ -411,13 +466,45 @@ class HBcalcs:
                         #print "angle 1: ", self._getTheta(frame, pos[wat_O-1], pos[nbr_O-1], pos[nbr_wat_all_atoms[1]-1])
                         # list of all potential H-bond angles between the water-water pair
                         # theta angle = Acceptor-Donor-Hydrogen
-                        theta_list = [self._getTheta(frame, pos[wat_O-1], pos[nbr_O-1], pos[nbr_wat_all_atoms[1]-1]), 
-                                        self._getTheta(frame, pos[wat_O-1], pos[nbr_O-1], pos[nbr_wat_all_atoms[2]-1]), 
-                                        self._getTheta(frame, pos[nbr_O-1], pos[wat_O-1], pos[cluster_water_all_atoms[1]-1]), 
-                                        self._getTheta(frame, pos[nbr_O-1], pos[wat_O-1], pos[cluster_water_all_atoms[2]-1])]
-                        hbangle = min(theta_list) # min angle is a potential Hbond
+                        theta_0 = self._getTheta(frame, pos[nbr_wat_all_atoms[1]-1], pos[nbr_O-1], pos[wat_O-1])
+                        theta_1 = self._getTheta(frame, pos[nbr_wat_all_atoms[2]-1], pos[nbr_O-1], pos[wat_O-1])
+                        theta_2 = self._getTheta(frame, pos[cluster_water_all_atoms[1]-1], pos[wat_O-1], pos[nbr_O-1])
+                        theta_3 = self._getTheta(frame, pos[cluster_water_all_atoms[2]-1], pos[wat_O-1], pos[nbr_O-1])
+                        theta_list = [theta_0, theta_1, theta_2, theta_3]
+                        theta = min(theta_list) # min angle is a potential Hbond
+                        r = np.linalg.norm(pos[wat_O-1] - pos[nbr_O-1])
+                        self.hsa_data[cluster][2][15].append(theta)
+                        self.hsa_data[cluster][2][17].append(r)
+                        #print r, theta
+                        """
+                        theta_index = theta_list.index(theta)
+                        #print theta_list
                         #print hbangle
-                        self.hsa_data[cluster][2][15].append(hbangle[0]) # add to HBangleww timeseries (regardless of whether it is an Hbond or not)
+                        #self.hsa_data[cluster][2][15].append(hbangle[0]) # add to HBangleww timeseries (regardless of whether it is an Hbond or not)
+                        if theta_index < 2:
+                            #print "Central water is acceptor"
+                            #print theta_list[2:4]
+                            psi = min(theta_list[2:4])
+                            psi_index = theta_list.index(psi)
+                            if theta_index == 0:
+                                phi = self._getPhi(frame, pos[nbr_wat_all_atoms[2]-1], pos[nbr_wat_all_atoms[1]-1], pos[nbr_O-1], pos[wat_O-1])
+                                
+                                #omega = self._getPhi(frame, pos[nbr_wat_all_atoms[2]-1], pos[nbr_wat_all_atoms[1]-1], pos[nbr_O-1], pos[wat_O-1])
+                            else:
+                                phi = self._getPhi(frame, pos[nbr_wat_all_atoms[1]-1], pos[nbr_wat_all_atoms[2]-1], pos[nbr_O-1], pos[wat_O-1])
+
+                        else:
+                            #print "Central water is donor"
+                            #print theta_list[0:2]
+                            psi = min(theta_list[0:2])
+                            if theta_index == 2:
+                                chi = self._getPhi(frame, pos[cluster_water_all_atoms[2]-1], pos[cluster_water_all_atoms[1]-1], pos[wat_O-1], pos[nbr_O-1])
+                            else:
+                                chi = self._getPhi(frame, pos[cluster_water_all_atoms[1]-1], pos[cluster_water_all_atoms[2]-1], pos[wat_O-1], pos[nbr_O-1])
+
+                        #print theta, psi, phi, chi
+
+                        
                         if hbangle <= 30: # if Hbond is made
                             #print hbangle
                             self.hsa_data[cluster][1][4] += 1 # add to cumulative sum of HBww
@@ -428,18 +515,20 @@ class HBcalcs:
                             # or as a donor
                             else:
                                 self.hsa_data[cluster][1][8] += 1 # add to cumulative of summ of HBwwdon
+                                print hbangle
+                        """
                     
-                    self.hsa_data[cluster][2][4].append(hbww) # append to HBww timeseries
+                    #self.hsa_data[cluster][2][4].append(hbww) # append to HBww timeseries
                     # percentHBww calculations
-                    if wat_nbrs != 0:
-                        percent_hbww += (hbww/wat_nbrs)*100
-                    self.hsa_data[cluster][2][11].append(percent_hbww) # append to percentHBww timeseries
+                    #if wat_nbrs != 0:
+                    #    percent_hbww += (hbww/wat_nbrs)*100
+                    #self.hsa_data[cluster][2][11].append(percent_hbww) # append to percentHBww timeseries
                     
                     #*********************************************************************************************************************************#
                     # The following loop is for Hbondsw calculations
                     # Divided in three steps, first solute acceptors, solute acceptor-donors and then solute donors
                     # retrieve neighbor protein acceptor atoms
-                    
+                    """
                     if self.non_water_atom_ids.size != 0: 
                         if self.solute_acc_ids.size != 0:
                             solute_acc_nbr_indices = d_acc.query_nbrs(pos[wat_O-1])
@@ -562,8 +651,8 @@ class HBcalcs:
 
                         self.hsa_data[cluster][1][13] += percent_hbsw # add to cumulative sum of percentHBsw
                         self.hsa_data[cluster][2][13].append(percent_hbsw) # append to percentHBsw timeseries
-        
-        tot = total_HB_sw/self.hsa_data[cluster][1][0]
+                    """
+        #tot = total_HB_sw/self.hsa_data[cluster][1][0]
          
         #print "Total Hbonds: ", tot
         #print "Breakdown: "

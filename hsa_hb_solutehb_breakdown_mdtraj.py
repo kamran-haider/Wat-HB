@@ -3,14 +3,12 @@ __doc__='''
 
 #===============================================================================
 #
-#          FILE:  Main classes and functions implementing hydrogen bond calculations on a 3-D grid
-                  In general this grid coincides with a GIST grid from a previously run GIST calculation.
-#         USAGE:  a tester script will be provided as an example 
+#          FILE:  Main classes and functions implementing hydrogen bond calculations for hydration sites
 # 
 #   DESCRIPTION:  
 # 
 #       OPTIONS:  ---
-#  REQUIREMENTS:  Desmond, Schrodinger Python API
+#  REQUIREMENTS:  numpy, scipy, mdtraj
 #          BUGS:  ---
 #         NOTES:  ---
 #        AUTHOR:  Kamran Haider
@@ -25,18 +23,15 @@ __doc__='''
 '''
 _version = "$Revision: 1.0 $"
 # import shrodinger modules
-from schrodinger import structure
-
-from schrodinger.trajectory.desmondsimulation import create_simulation
-from schrodinger.trajectory.atomselection import select_component
-from schrodinger.trajectory.atomselection import FrameAslSelection as FAS
-#from schrodinger.trajectory.pbc_manager import PBCMeasureMananger
-
 # import other python modules
 import numpy as np
-#from scipy.spatial import KDTree, cKDTree
+import mdtraj as md
+from scipy import stats
+
 import os, sys, time
-#import math
+import re
+import copy
+
 degrees_per_rad = 180./np.pi
 
 #################################################################################################################
@@ -48,104 +43,88 @@ degrees_per_rad = 180./np.pi
 class HBcalcs:
 #*********************************************************************************************#
     # Initializer function
-    def __init__(self, input_cmsname, input_trjname, ligand_file):
+    def __init__(self, input_prmtop, input_trjname, clustercenter_file):
         """
         Data members
         """
-        self.cmsname = input_cmsname
-        self.dsim = create_simulation(input_cmsname, input_trjname)
-        self._indexGenerator(ligand_file)
+        """
+        Initializes  an object of HSAcalcs class
+        """
+        self.hsa_data = self._initializeHSADict(clustercenter_file)
+        print "Reading in topology ..."
+        first_frame = md.load_frame(input_trjname, 0, top=input_prmtop)
+        self.top = first_frame.topology
+        print "Generating atom indices ..."
+        self._indexGenerator()
+        print "Done..."
 
-        #self.hsa_data = self._initializeHSADict(clustercenter_file)
-        self.box = self._initializePBC()
 #*********************************************************************************************#
     # index generator function
-    def _indexGenerator(self, ligand_file):
-        frame = self.dsim.getFrame(0)
-        # atom and global indices of all atoms in the system
-        self.all_atom_ids = np.arange(len(self.dsim.cst.atom))+1
-        self.all_atom_gids = np.arange(len(self.dsim.cst.atom)+self.dsim.cst._pseudo_total)
-        # obtain oxygen atom and global indices for all water molecules
-        oxygen_sel = FAS('atom.ele O')
-        all_oxygen_atoms = oxygen_sel.getAtomIndices(frame)
-        water_sel = select_component(self.dsim.cst, ['solvent'])
-        solvent_atoms = water_sel.getAtomIndices(frame)
-        solvent_oxygen_atoms = list(set(solvent_atoms).intersection(set(all_oxygen_atoms)))
-        solvent_oxygen_atoms.sort()
-        self.wat_oxygen_atom_ids = np.array(solvent_oxygen_atoms, dtype=np.int)
-        self.wat_oxygen_atom_gids = self.wat_oxygen_atom_ids - 1
-        # obtain atom indices for all water atoms
-        self.wat_atom_ids = self.getWaterIndices(self.wat_oxygen_atom_ids)
-        # obtain atom and global indices for all water atoms
-        #wat_id_list = self.getWaterIndices(self.wat_oxygen_atom_ids)
-        #self.wat_atom_ids = wat_id_list[0]
-        #self.wat_atom_gids = wat_id_list[1]        
-        # obtain all non-water atom and global indices
-        self.non_water_atom_ids = np.setxor1d(self.all_atom_ids, self.wat_atom_ids).astype(int)
-        # here add commands to restrict non-water atom ids to within 5.0A of ligand
-        solute_indices_near_lig = []
-        ligand = structure.StructureReader(ligand_file).next()
-        lig_atom_coords = ligand.getXYZ()
-        solute_pos = frame.position[self.non_water_atom_ids-1]
-        d_solute_nbrs = _DistanceCell(solute_pos, 5)
-        for coord in lig_atom_coords:
-            solute_nbr_indices = d_solute_nbrs.query_nbrs(coord)
-            for solute_nbr_index in solute_nbr_indices:
-                if solute_nbr_index not in solute_indices_near_lig:
-                    solute_indices_near_lig.append(solute_nbr_index)
-        #print self.non_water_atom_ids
-        self.non_water_atom_ids_near_lig = [self.non_water_atom_ids[nbr_index] for nbr_index in solute_indices_near_lig]
-
-
-        #self.non_water_gids = np.setxor1d(self.all_atom_gids,self.wat_atom_gids)
-        # These lists define the search space for solute water Hbond calculation
+    def _indexGenerator(self):
+        
+        self.all_atom_ids = self.top.select("all")
+        self.wat_atom_ids = self.top.select("water")
+        self.wat_oxygen_atom_ids = self.top.select("water and name O")
+        self.non_water_atom_ids = self.top.select("not water")
         acc_list = []
         don_list = []
         acc_don_list = []
         # To speed up calculations, we will pre-create donor atom, hydrogen pairs
         self.don_H_pair_dict = {}
-        if self.non_water_atom_ids.size != 0:
-            frame_st = self.dsim.getFrameStructure(0)
-            for solute_at_id in self.non_water_atom_ids:
-                solute_atom = frame_st.atom[solute_at_id]
-                solute_atom_type = solute_atom.pdbres.strip(" ") + " " + solute_atom.pdbname.strip(" ")
-                if solute_atom.element in ["O", "S"]:
-                    # if O/S atom is bonded to an H, type it as donor and an acceptor
-                    if "H" in [bonded_atom.element for bonded_atom in solute_atom.bonded_atoms]:
-                        #print "Found donor-acceptor atom type: %i %s" % (solute_at_id, solute_atom_type)
-                        acc_don_list.append(solute_at_id)
+        for bond in self.top.bonds:
+            # iterate over bonds involing non-water atoms
+            if bond[0].index in self.non_water_atom_ids or bond[1].index in self.non_water_atom_ids:
+                # assign O and S bonded to a hydrogen as both donor and an acceptor  
+                if bond[0].element.name in ["oxygen", "sulfur"] or bond[1].element.name in ["oxygen", "sulfur"]:
+                    # if second atom is a hydrogen, assign this atom as a donor and acceptor 
+                    # (assuming hydrogen is always the second atom in bonds involving hydrogens)
+                    if bond[1].element.name == "hydrogen":
+                        at_id = bond[0].index
+                        acc_don_list.append(at_id)
                         # create a dictionary entry for this atom, that will hold all atom, H id pairs 
-                        self.don_H_pair_dict[solute_at_id] = []
-                        for bonded_atom in solute_atom.bonded_atoms:
-                            if bonded_atom.element == "H":
-                                self.don_H_pair_dict[solute_at_id].append([solute_at_id, bonded_atom.index])
-
-                    # if O/S atom is not bonded to an H, type it as an acceptor
+                        if at_id not in self.don_H_pair_dict.keys():
+                            self.don_H_pair_dict[at_id] = [[at_id, bond[1].index]]
+                        else:
+                            self.don_H_pair_dict[at_id].append([at_id, bond[1].index])
+                    # if second atom is not H then check both first and second atom to see which one is O or S
+                    # then add the correct atom to acceptor list
                     else:
-                        #print "Found acceptor atom type: %i %s" % (solute_at_id, solute_atom_type)
-                        acc_list.append(solute_at_id)
-                if solute_atom.element in ["N"]:
-                    # if N atom is bonded to an H, type it as a donor
-                    if "H" in [bonded_atom.element for bonded_atom in solute_atom.bonded_atoms]:
-                        #print "Found donor atom type: %i %s" % (solute_at_id, solute_atom_type)
-                        don_list.append(solute_at_id)
+                        if bond[1].element.name in ["oxygen", "sulfur"]:
+                            acc_list.append(bond[1].index)
+                        else:
+                            acc_list.append(bond[0].index)
+                # iterate over bonds involving a nitrgogen atom
+                elif bond[0].element.name in ["nitrogen"] or bond[1].element.name in ["nitrogen"]:
+                    # if second atom is a hydrogen, assign this atom as a donor 
+                    # (assuming hydrogen is always the second atom in bonds involving hydrogens)
+                    if bond[1].element.name == "hydrogen":
+                        at_id = bond[0].index
+                        #if at_id not in don_list:
+                        don_list.append(at_id)
                         # create a dictionary entry for this atom, that will hold all atom, H id pairs 
-                        self.don_H_pair_dict[solute_at_id] = []
-                        for bonded_atom in solute_atom.bonded_atoms:
-                            if bonded_atom.element == "H":
-                                self.don_H_pair_dict[solute_at_id].append([solute_at_id, bonded_atom.index])
-
-
-                    # if N atom is not bonded to an H, type it as an acceptor
+                        if at_id not in self.don_H_pair_dict.keys():
+                            self.don_H_pair_dict[at_id] = [[at_id, bond[1].index]]
+                        else:
+                            self.don_H_pair_dict[at_id].append([at_id, bond[1].index])
                     else:
-                        #print "Found acceptor atom type: %i %s" % (solute_at_id, solute_atom_type)
-                        acc_list.append(solute_at_id)
-        #print don_list
+                    # if second atom is not H then check both first and second atom to see which one is N
+                    # then add the correct atom to acceptor list
+                        if bond[1].element.name in ["nitrogen"]:
+                            acc_list.append(bond[1].index)
+                        else:
+                            acc_list.append(bond[0].index)
+
         #print acc_list
+        #print don_list
         #print acc_don_list
-        self.solute_acc_ids = np.array(acc_list, dtype=np.int)
-        self.solute_acc_don_ids = np.array(acc_don_list, dtype=np.int)
-        self.solute_don_ids = np.array(don_list, dtype=np.int)
+
+        self.solute_acc_ids = np.unique(np.array(acc_list, dtype=np.int))
+        self.solute_acc_don_ids = np.unique(np.array(acc_don_list, dtype=np.int))
+        self.solute_don_ids = np.unique(np.array(don_list, dtype=np.int))
+        #print don_list
+        #print self.solute_don_ids
+        #for at in self.don_H_pair_dict:
+        #    print at, self.don_H_pair_dict[at], self.top.atom(at)
         self.prot_hbond_data = {}
         for hb_group in np.concatenate((self.solute_acc_ids, self.solute_acc_don_ids, self.solute_don_ids)):
             hb_group_name = self.dsim.cst.atom[hb_group].getResidue().pdbres.strip() + str(self.dsim.cst.atom[hb_group].getResidue().resnum) + " " + self.dsim.cst.atom[hb_group].pdbname.strip()
@@ -154,93 +133,61 @@ class HBcalcs:
 
  
 #*********************************************************************************************#
-    # retrieve water atom indices for selected oxygen indices 
-    def getWaterIndices(self, oxygen_atids):
-        # here we will get data that is required to create previous index mapper object
-        # first step is to obtain solvent forcefield structure
-        solvent_ffst = None
-        # obtain solvent fsst by iterating over all 'types' of forcefield (i.e., solute, solvent, ion)
-        for ffst in self.dsim.cst.ffsts:
-            if ffst.parent_structure.property['s_ffio_ct_type'] == 'solvent':
-                if solvent_ffst is not None:
-                    raise Exception("does not support multiple solvent ct.")
-                solvent_ffst = ffst
-
-        # set oxygen index to none
-        oxygen_index = None
-        # set types of pseudo particles to 0
-        npseudo_sites = 0
-        # set number of solvent atom types to 0
-        natom_sites = 0
-       # for each forcefield site (which is any 'site' on the structure to which params are assigned)
-        for i, site in enumerate(solvent_ffst.ffsite):
-            # check if this site belongs to Oxygen atoms
-            if site.vdwtype.upper().startswith('O'):
-                # if oxygen index is already defined, raise exception otherwise set oxygen index to this site
-                if oxygen_index is not None:
-                    raise Exception("water molecule has more than two oxygen atoms")
-                oxygen_index = i
-            # check if this site belongs to pseudoparticle, if yes raise corresponding number
-            if site.type.lower() == 'pseudo':
-                npseudo_sites += 1
-            # check if this site belongs to an atom, if yes raise corresponding number
-            elif site.type.lower() == 'atom':
-                natom_sites += 1
-        # at the end of this loop we have checked all possible forcefield sites to get the correst index for oxygen
-        # in addition we get total number of atoms and pseudopartciles on a solvent site (water in this case) 
-        if oxygen_index is None:
-            raise Exception("can not locate oxygen atom.")
-        if natom_sites == 0:
-            raise Exception("number of atoms is zero.")
-        # here we totall number of atoms in solvent 
-        nmols = len(solvent_ffst.parent_structure.atom)/natom_sites
-        #print oxygen_index
-        # this is atid for the first oxygen atom in water oxygen atom array
-        wat_begin_atid = oxygen_atids[0]
-        # gid in this case is atid - 1
-        wat_begin_gid = wat_begin_atid - 1
-        oxygen_gids = oxygen_atids - 1
-        pseudo_begin_gid = wat_begin_gid + natom_sites*nmols
-        id_list = []
-        #return atids of atoms of selected water molecules.
-        water_atids = []
-        for oxygen_atid in oxygen_atids:
-            for i in range(natom_sites):
-                atid = oxygen_atid + i - oxygen_index
-                water_atids.append(atid)
-        #id_list.append(np.array(water_atids))
-        #return gids of particles (including pseudo sites) of selected water molecules.
-        # For now we will ignore GIDs but these are important when water model has pseudoatoms
+    def getNeighborAtoms(self, xyz, dist, point):
         """
-        water_gids = []
-        for oxygen_gid in oxygen_gids:
-            for i in range(natom_sites):
-                gid = oxygen_gid + i - oxygen_index
-                water_gids.append(gid)
-            # pseudo atoms are placed right after real atoms
-            offset = (oxygen_gid - wat_begin_gid) / natom_sites
-            for i in range(npseudo_sites):
-                gid = pseudo_begin_gid + offset*npseudo_sites + i
-                water_gids.append(gid)
-        water_gids.sort()
-        id_list.append(np.array(water_gids, dtype=np.int))
+        An efficint routine for neighbor search
         """
-        self.oxygen_index = oxygen_index
-        self.n_atom_sites = natom_sites
-        self.n_pseudo_sites = npseudo_sites
-        self.wat_begin_gid = wat_begin_gid
-        self.pseudo_begin_gid = pseudo_begin_gid
-        return np.array(water_atids)
+        # create an array of indices around a cubic grid
+        dist_squared = dist * dist
+        neighbors = []
+        for i in (-1, 0, 1):
+            for j in (-1, 0, 1):
+                for k in (-1, 0, 1):
+                    neighbors.append((i,j,k))
+        neighbor_array = np.array(neighbors, np.int)
+        min_ = np.min(xyz, axis=0)
+        cell_size = np.array([dist, dist, dist], np.float)
+        cell = np.array((xyz - min_) / cell_size)#, dtype=np.int)
+        # create a dictionary with keys corresponding to integer representation of transformed XYZ's
+        cells = {}
+        for ix, assignment in enumerate(cell):
+            # convert transformed xyz coord into integer index (so coords like 1.1 or 1.9 will go to 1)
+            indices =  assignment.astype(int)
+            # create interger indices
+            t = tuple(indices)
+            # NOTE: a single index can have multiple coords associated with it
+            # if this integer index is already present
+            if t in cells:
+                # obtain its value (which is a list, see below)
+                xyz_list, trans_coords, ix_list = cells[t]
+                # append new xyz to xyz list associated with this entry
+                xyz_list.append(xyz[ix])
+                # append new transformed xyz to transformed xyz list associated with this entry
+                trans_coords.append(assignment)
+                # append new array index 
+                ix_list.append(ix)
+            # if this integer index is encountered for the first time
+            else:
+                # create a dictionary key value pair,
+                # key: integer index
+                # value: [[list of x,y,z], [list of transformed x,y,z], [list of array indices]]
+                cells[t] = ([xyz[ix]], [assignment], [ix])
 
-#*********************************************************************************************#
-    def _initializePBC(self):
-        # for minimum image convention
-        box_vectors = self.dsim.getFrame(0).box
-        if box_vectors[0] == 0.0 or box_vectors[4] == 0.0 or box_vectors[8] == 0.0:
-            print "Warning: Periodic Boundary Conditions unspecified!"
-        else:
-            box = np.asarray([box_vectors[0], box_vectors[4], box_vectors[8]])
-        return box
+        cell0 = np.array((point - min_) / cell_size, dtype=np.int)
+        tuple0 = tuple(cell0)
+        near = []
+        for index_array in tuple0 + neighbor_array:
+            t = tuple(index_array)
+            if t in cells:
+                xyz_list, trans_xyz_list, ix_list = cells[t]
+                for (xyz, ix) in zip(xyz_list, ix_list):
+                    diff = xyz - point
+                    if np.dot(diff, diff) <= dist_squared and float(np.dot(diff, diff)) > 0.0:
+                        #near.append(ix)
+                        #print ix, np.dot(diff, diff)
+                        near.append(ix)
+        return near
+
 
 #*********************************************************************************************#
     def _getTheta(self, frame, pos1, pos2, pos3):
@@ -269,8 +216,7 @@ class HBcalcs:
             cos_theta[cos_theta >  1.0] =  1.0
             cos_theta[cos_theta < -1.0] = -1.0
         theta = np.arccos(cos_theta) * degrees_per_rad
-        return theta[0]
-
+        return theta
 #*********************************************************************************************#
                    
     def run_hb_analysis_sw(self, n_frame, start_frame):
@@ -311,7 +257,7 @@ class HBcalcs:
                         theta_list = [self._getTheta(frame, pos[solute_acceptor-1], pos[wat_O-1], pos[nbr_water_all_atoms[1]-1]), 
                                         self._getTheta(frame, pos[solute_acceptor-1], pos[wat_O-1], pos[nbr_water_all_atoms[2]-1])]
                         hbangle = min(theta_list) # min angle is a potential Hbond
-                        if hbangle <= 20: # if Hbond is made
+                        if hbangle <= 30: # if Hbond is made
                             self.prot_hbond_data[solute_acceptor][1][2] += 1
             # begin iterating over solute donor atoms
             for solute_donor in np.concatenate((self.solute_don_ids, self.solute_acc_don_ids)):
@@ -374,6 +320,7 @@ class HBcalcs:
                             if theta <= 20:
                                 #print "Hbond made between: ", solute_donor-1, acc-1, theta
                                 self.prot_hbond_data[solute_donor][1][5] += 1
+
 
 #*********************************************************************************************#
 

@@ -151,7 +151,6 @@ class HBcalcs:
             hb_group_name = self.dsim.cst.atom[hb_group].getResidue().pdbres.strip() + str(self.dsim.cst.atom[hb_group].getResidue().resnum) + " " + self.dsim.cst.atom[hb_group].pdbname.strip()
             self.prot_hbond_data[hb_group] = [hb_group_name, np.zeros(6, dtype="float64")]
             #print self.prot_hbond_data[hb_group]
-
  
 #*********************************************************************************************#
     # retrieve water atom indices for selected oxygen indices 
@@ -243,6 +242,8 @@ class HBcalcs:
         return box
 
 #*********************************************************************************************#
+
+#*********************************************************************************************#
     def _getTheta(self, frame, pos1, pos2, pos3):
         "Adapted from Schrodinger pbc_manager class."
         pos1.shape=1,3
@@ -296,7 +297,6 @@ class HBcalcs:
             #*****************************************************************#
             # begin iterating over solute acceptor atoms
             for solute_acceptor in np.concatenate((self.solute_acc_ids, self.solute_acc_don_ids)):
-                # this condition restricts calculation to groups near ligand
                 if solute_acceptor in self.non_water_atom_ids_near_lig:
                     # obtain water neighbors (oxygens) 
                     wat_nbr_indices = d_wat_nbrs.query_nbrs(pos[solute_acceptor -1])
@@ -311,7 +311,7 @@ class HBcalcs:
                         theta_list = [self._getTheta(frame, pos[solute_acceptor-1], pos[wat_O-1], pos[nbr_water_all_atoms[1]-1]), 
                                         self._getTheta(frame, pos[solute_acceptor-1], pos[wat_O-1], pos[nbr_water_all_atoms[2]-1])]
                         hbangle = min(theta_list) # min angle is a potential Hbond
-                        if hbangle <= 20: # if Hbond is made
+                        if hbangle <= 30: # if Hbond is made
                             self.prot_hbond_data[solute_acceptor][1][2] += 1
             # begin iterating over solute donor atoms
             for solute_donor in np.concatenate((self.solute_don_ids, self.solute_acc_don_ids)):
@@ -355,9 +355,9 @@ class HBcalcs:
                                 #print "Hbond made between: ", solute_donor-1, wat_O-1, hbangle
                                 self.prot_hbond_data[solute_acceptor][1][4] += 1
 
-            for solute_donor in np.concatenate((self.solute_don_ids, self.solute_acc_don_ids)):
-            #for solute_donor in [3371]:
-                if solute_donor in self.non_water_atom_ids_near_lig:
+            #for solute_donor in np.concatenate((self.solute_don_ids, self.solute_acc_don_ids)):
+            for solute_donor in [3371]:
+                #if solute_donor in self.non_water_atom_ids_near_lig:
                     # obtain neighboring protein acceptors
                     prot_acc_nbr_indices = d_prot_acc.query_nbrs(pos[solute_donor -1])
                     prot_acc_nbrs = [np.concatenate((self.solute_acc_ids, self.solute_acc_don_ids))[nbr_index] for nbr_index in prot_acc_nbr_indices]
@@ -458,7 +458,8 @@ class _DistanceCell:
         Given a coordinate point, return all point indexes (0-indexed) that
         are within the threshold distance from it.
         """
-        cell0 = np.array((point - self.min_) / self.cell_size, dtype=np.int)
+        cell0 = np.array((point - self.min_) / self.cell_size, 
+                                     dtype=np.int)
         tuple0 = tuple(cell0)
         near = []
         for index_array in tuple0 + self.neighbor_array:
@@ -472,7 +473,12 @@ class _DistanceCell:
                         #print ix, np.dot(diff, diff)
                         near.append(ix)
         return near
+
+
 #*********************************************************************************************#
+
+
+
 
 if (__name__ == '__main__') :
 

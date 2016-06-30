@@ -243,6 +243,8 @@ class HBcalcs:
         return box
 
 #*********************************************************************************************#
+
+#*********************************************************************************************#
     def _getTheta(self, frame, pos1, pos2, pos3):
         "Adapted from Schrodinger pbc_manager class."
         pos1.shape=1,3
@@ -311,7 +313,7 @@ class HBcalcs:
                         theta_list = [self._getTheta(frame, pos[solute_acceptor-1], pos[wat_O-1], pos[nbr_water_all_atoms[1]-1]), 
                                         self._getTheta(frame, pos[solute_acceptor-1], pos[wat_O-1], pos[nbr_water_all_atoms[2]-1])]
                         hbangle = min(theta_list) # min angle is a potential Hbond
-                        if hbangle <= 20: # if Hbond is made
+                        if hbangle <= 30: # if Hbond is made
                             self.prot_hbond_data[solute_acceptor][1][2] += 1
             # begin iterating over solute donor atoms
             for solute_donor in np.concatenate((self.solute_don_ids, self.solute_acc_don_ids)):
@@ -458,7 +460,8 @@ class _DistanceCell:
         Given a coordinate point, return all point indexes (0-indexed) that
         are within the threshold distance from it.
         """
-        cell0 = np.array((point - self.min_) / self.cell_size, dtype=np.int)
+        cell0 = np.array((point - self.min_) / self.cell_size, 
+                                     dtype=np.int)
         tuple0 = tuple(cell0)
         near = []
         for index_array in tuple0 + self.neighbor_array:
